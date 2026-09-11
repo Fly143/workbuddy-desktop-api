@@ -2,6 +2,12 @@
 
 本文件记录 workbuddy-desktop-api 的重要变更。协议层历史继承自 [xiaomi-mimo-desktop-api](https://github.com/Fly143/xiaomi-mimo-desktop-api)。
 
+## [v1.2.1] — 2026-09-11
+
+### 变更
+- **移除手机/APK 手动粘贴导入** — 仅保留 PC 管理页「自动检测」
+- **恢复强制 `cryptography` 加密** — 去掉可选导入降级；`config.json` 敏感字段继续 Fernet 密文
+
 ## [v1.1.9] — 2026-09-11
 
 ### 清理
