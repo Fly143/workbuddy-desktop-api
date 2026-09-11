@@ -14,14 +14,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
-try:
-    from cryptography.fernet import Fernet, InvalidToken
-    HAS_FERNET = True
-except ImportError:  # Chaquopy / 无原生依赖环境
-    Fernet = None
-    InvalidToken = Exception
-    HAS_FERNET = False
-    print("[Config] cryptography unavailable; secrets stored in plaintext")
+from cryptography.fernet import Fernet, InvalidToken
 
 DEFAULT_API_KEYS = "sk-workbuddy"
 DEFAULT_ADMIN_PASSWORD = "admin"
@@ -39,12 +32,10 @@ _SENSITIVE_ACCOUNT_FIELDS = (
 class SecretBox:
     def __init__(self, config_path: Path):
         self.key_path = config_path.parent / ".secret_key"
-        self._fernet = None
+        self._fernet: Optional[Fernet] = None
         self._lock = threading.RLock()
 
-    def _load_or_create(self):
-        if not HAS_FERNET:
-            return None
+    def _load_or_create(self) -> Fernet:
         with self._lock:
             if self._fernet is not None:
                 return self._fernet
@@ -65,22 +56,16 @@ class SecretBox:
             return ""
         if isinstance(plaintext, str) and plaintext.startswith(ENC_PREFIX):
             return plaintext
-        box = self._load_or_create()
-        if box is None:
-            return plaintext
-        return ENC_PREFIX + box.encrypt(plaintext.encode("utf-8")).decode("ascii")
+        return ENC_PREFIX + self._load_or_create().encrypt(plaintext.encode("utf-8")).decode("ascii")
 
     def decrypt(self, value: str) -> str:
         if not value:
             return ""
         if not isinstance(value, str) or not value.startswith(ENC_PREFIX):
             return value
-        box = self._load_or_create()
-        if box is None:
-            return ""
         try:
-            return box.decrypt(value[len(ENC_PREFIX):].encode("ascii")).decode("utf-8")
-        except Exception as e:
+            return self._load_or_create().decrypt(value[len(ENC_PREFIX):].encode("ascii")).decode("utf-8")
+        except (InvalidToken, Exception) as e:
             print(f"[Config] decrypt failed ({e}); check .secret_key")
             return ""
 

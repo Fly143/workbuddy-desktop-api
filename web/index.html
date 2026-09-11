@@ -71,28 +71,6 @@ ol{margin:8px 0 8px 20px;color:var(--muted);font-size:13px;line-height:1.8}
           <button class="ghost" onclick="loadAccounts()">刷新账号</button>
         </div>
         <div id="desktopResult"></div>
-
-        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
-          <div class="hint" style="margin-bottom:10px">
-            <strong>手动导入（手机 / 无 Desktop 环境）</strong><br/>
-            从电脑上的 <code>%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info</code>
-            复制 accessToken / refreshToken / uid 粘贴。
-          </div>
-          <div class="field">
-            <label>accessToken</label>
-            <input type="text" id="wbAccess" placeholder="粘贴 accessToken"/>
-          </div>
-          <div class="field">
-            <label>refreshToken</label>
-            <input type="text" id="wbRefresh" placeholder="粘贴 refreshToken"/>
-          </div>
-          <div class="field">
-            <label>UID</label>
-            <input type="text" id="wbUid" placeholder="uid"/>
-          </div>
-          <button class="ok" style="width:100%" onclick="importManual()">保存手动导入</button>
-          <div id="manualResult"></div>
-        </div>
       </div>
 
       <!-- 账号 -->
@@ -208,30 +186,6 @@ async function importDesktop() {
     loadAccounts();
   } catch (e) {
     status('desktopResult', 'err', '导入失败: ' + e.message);
-  }
-}
-
-async function importManual() {
-  const at = $('wbAccess').value.trim();
-  if (!at) { status('manualResult', 'err', '请填写 accessToken'); return; }
-  status('manualResult', 'info', '导入中…');
-  try {
-    const r = await fetch('/api/desktop/import', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        wbAccessToken: at,
-        wbRefreshToken: $('wbRefresh').value.trim() || undefined,
-        wbUid: $('wbUid').value.trim() || undefined,
-        uid: $('wbUid').value.trim() || undefined
-      })
-    });
-    const d = await r.json();
-    if (!d.ok) { status('manualResult', 'err', d.error || d.detail || '导入失败'); return; }
-    status('manualResult', 'ok', '导入成功\nvalidated=' + d.validated + (d.detail ? '\n' + d.detail : ''));
-    loadAccounts();
-  } catch (e) {
-    status('manualResult', 'err', '导入失败: ' + e.message);
   }
 }
 
