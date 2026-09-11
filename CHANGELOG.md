@@ -2,6 +2,12 @@
 
 本文件记录 workbuddy-desktop-api 的重要变更。协议层历史继承自 [xiaomi-mimo-desktop-api](https://github.com/Fly143/xiaomi-mimo-desktop-api)。
 
+## [v1.1.3] — 2026-09-11
+
+### 变更
+- **Anthropic 转换层移除 `max_tokens` 兜底值** — `convert_request` 不再默认填 4096，
+  未显式指定时不写入请求体，透传给上游（与 v1.1.2 对 Chat 路径的处理保持一致）
+
 ## [v1.1.0] — 2026-09-11
 
 ### 变更（上游切换：MiMo Desktop → WorkBuddy Desktop）
