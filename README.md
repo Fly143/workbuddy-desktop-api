@@ -361,7 +361,7 @@ open http://127.0.0.1:8080
 
 ```
 workbuddy-desktop-api/
-├── main.py                  # 入口 + 启动预探测 + 过期会话清理
+├── main.py                  # 入口 + 启动预探测
 ├── deploy.sh
 ├── requirements.txt
 ├── config.example.json
@@ -379,7 +379,6 @@ workbuddy-desktop-api/
     ├── tool_call.py         # 工具调用提取
     ├── tool_sieve.py        # 流式筛分
     ├── context_compressor.py
-    ├── session_store.py
     ├── response_store.py
     ├── usage_store.py
     ├── batch.py

@@ -2,6 +2,17 @@
 
 本文件记录 workbuddy-desktop-api 的重要变更。协议层历史继承自 [xiaomi-mimo-desktop-api](https://github.com/Fly143/xiaomi-mimo-desktop-api)。
 
+## [v1.1.8] — 2026-09-11
+
+### 清理
+- **移除 session_store 死代码（-340 行）** — 上游无状态（无 conversationId），
+  指纹匹配 / conv_id 续接 / token 峰值机制自 v1.1.4 修复多轮历史后已无任何消费者：
+  - 删除 `app/session_store.py` 与 `sessions.json`
+  - `routes.py` / `anthropic_routes.py`：移除 conv_id 传递、指纹记录、token 峰值记录
+  - `client.call_api` / `stream_api`：移除被上游忽略的 `conversation_id` 参数
+  - `main.py`：移除启动期清理线程与 `threading` / `asyncio` 导入
+  - 移除 `/api/cleanup` 端点（调用的 `client.delete_conversations` 方法不存在，该端点一直无法工作）
+
 ## [v1.1.7] — 2026-09-11
 
 ### 修复

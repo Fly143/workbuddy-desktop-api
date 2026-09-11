@@ -26,13 +26,6 @@ from .context_compressor import compress_messages, truncate_messages, should_com
 from .tool_call import extract_tool_call, normalize_tool_call, get_tool_names, clean_tool_text  # build_tool_prompt unused
 from .tool_sieve import StreamSieve
 from .usage_store import add_usage as _add_usage, get_usage as _get_usage, clear_usage as _clear_usage
-from .session_store import (
-    get_or_create_session as _get_or_create_session,
-    update_tokens as _update_session_tokens,
-    update_fingerprint as _update_session_fingerprint,
-    get_expired_sessions as _get_expired_sessions,
-    remove_session as _remove_session,
-)
 from .response_store import (
     save_response_record as _save_response_record,
     get_response_record as _get_response_record,
@@ -467,13 +460,6 @@ async def chat_completions(
     thinking = bool(request.reasoning_effort)
     client = WorkBuddyClient(account)
 
-    # 会话管理：通过消息指纹续接 WorkBuddy conversationId
-    conv_id, conv_is_new = _get_or_create_session(
-        account.user_id, request.messages, request.model
-    )
-    # 立即用当前消息更新指纹（对新会话：设置初值；对已有会话：更新续接后的指纹）
-    _update_session_fingerprint(account.user_id, conv_id, request.messages)
-
     # 上游无状态（copilot.tencent.com/v2/chat/completions 没有 conversation 概念）：
     # 每次请求都必须携带完整历史。增量发送（continuation）与分批 warmup 都依赖
     # 服务端 conversationId 累积上下文，在此上游上会被静默丢弃：历史丢失，
@@ -495,7 +481,6 @@ async def chat_completions(
         else:
             # 裁剪模式：直接裁剪，不需要 LLM 调用
             request.messages = truncate_messages(request.messages)
-            _update_session_fingerprint(account.user_id, conv_id, request.messages)
             query = build_query_from_messages(
                 request.messages, tools=tools_dict, passthrough=passthrough_mode
             )
@@ -505,7 +490,6 @@ async def chat_completions(
     if request.stream:
         return StreamingResponse(
             _stream_response(client, query, thinking, effective_model, tools_dict, multi_medias, passthrough=passthrough_mode,
-                             conv_id=conv_id, account_id=account.user_id,
                              needs_compression=needs_compression,
                              raw_messages=request.messages if needs_compression else None,
                              raw_tools=tools_dict if needs_compression else None,
@@ -528,17 +512,12 @@ async def chat_completions(
         )
     try:
         content, think_content, usage, citations, native_tool_calls = await client.call_api(
-            query, thinking, effective_model, multi_medias, conversation_id=conv_id,
+            query, thinking, effective_model, multi_medias,
             tools=tools_dict)
 
         # 保存用量
         if usage:
             _add_usage(request.model, usage.get("promptTokens", 0), usage.get("completionTokens", 0))
-            _update_session_tokens(account.user_id, conv_id, usage.get("promptTokens", 0))
-
-        # 首次消息：记录真实指纹
-        _update_session_fingerprint(account.user_id, conv_id, request.messages)
-
         # 优先用上游原生 tool_calls（passthrough=True 的主流路径）；
         # 仅在没有原生响应时才回退到文本解析（passthrough=False / 上游异常）。
         tool_names = []
@@ -595,7 +574,6 @@ async def _stream_response(
     client: WorkBuddyClient, query: str, thinking: bool, model: str,
     tools: list = None, multi_medias: list = None,
     passthrough: bool = False,
-    conv_id: str = None, account_id: str = None,
     needs_compression: bool = False,
     raw_messages: list = None,
     raw_tools: list = None,
@@ -729,7 +707,6 @@ async def _stream_response(
                 yield "data: [DONE]\n\n"
                 if last_usage:
                     _add_usage(model, last_usage.get("promptTokens", 0), last_usage.get("completionTokens", 0))
-                    _update_session_tokens(account_id, conv_id, last_usage.get("promptTokens", 0))
                 return
 
             # 无工具调用：补发缓冲正文后再发 stop
@@ -739,7 +716,6 @@ async def _stream_response(
             yield "data: [DONE]\n\n"
             if last_usage:
                 _add_usage(model, last_usage.get("promptTokens", 0), last_usage.get("completionTokens", 0))
-                _update_session_tokens(account_id, conv_id, last_usage.get("promptTokens", 0))
 
         else:
             # ═══════════════════════════════════════════════════
@@ -809,7 +785,6 @@ async def _stream_response(
             yield "data: [DONE]\n\n"
             if last_usage:
                 _add_usage(model, last_usage.get("promptTokens", 0), last_usage.get("completionTokens", 0))
-                _update_session_tokens(account_id, conv_id, last_usage.get("promptTokens", 0))
 
     except httpx.ReadTimeout:
         # 连接读取超时 — 发送优雅结束
@@ -1011,42 +986,6 @@ async def clear_usage(username: str = Depends(verify_admin)):
     return {"ok": True}
 
 
-@router.post("/api/cleanup")
-async def manual_cleanup(username: str = Depends(verify_admin)):
-    """手动触发过期会话清理。"""
-    try:
-        expired = _get_expired_sessions()
-        if not expired:
-            return {"ok": True, "msg": "没有过期会话", "deleted": 0}
-
-        print(f"[Cleanup] Found {len(expired)} expired sessions, deleting...")
-        deleted = 0
-        # 按账号分组
-        by_account = {}
-        for account_label, conv_id, model, days_ago in expired:
-            by_account.setdefault(account_label, []).append(conv_id)
-
-        for account_label, conv_ids in by_account.items():
-            # 找到对应账号
-            acc = None
-            for a in config_manager.config.workbuddy_accounts:
-                if a.user_id == account_label:
-                    acc = a
-                    break
-            if not acc:
-                continue
-
-            client = WorkBuddyClient(acc)
-            for conv_id in conv_ids:
-                if await client.delete_conversations([conv_id]):
-                    _remove_session(account_label, conv_id)
-                    deleted += 1
-                    print(f"[Cleanup] Deleted: {conv_id[:12]}...")
-
-        print(f"[Cleanup] Done: {deleted}/{len(expired)} deleted")
-        return {"ok": True, "msg": f"清理完成: {deleted}/{len(expired)}", "deleted": deleted}
-    except Exception as e:
-        return {"ok": False, "msg": str(e)}
 
 
 # ─── 模型列表（免鉴权，供管理页面使用） ───────────────────────
