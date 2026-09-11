@@ -21,7 +21,7 @@ from app.batch import init_batch_storage as init_anthropic_batches
 app = FastAPI(
     title="WorkBuddy Desktop API",
     description="WorkBuddy Desktop session → OpenAI + Anthropic API (Chat / Responses / Anthropic Messages)",
-    version="1.1.6",
+    version="1.1.7",
 )
 
 app.add_middleware(

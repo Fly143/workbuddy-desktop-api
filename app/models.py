@@ -10,6 +10,8 @@ class OpenAIMessage(BaseModel):
     content: Optional[Any] = None  # str or List[Dict] for multimodal
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None
+    reasoning: Optional[str] = Field(None, description="深度思考内容 (OpenAI o1 格式)")
+    reasoning_content: Optional[str] = Field(None, description="深度思考内容 (DeepSeek/WorkBuddy 格式)")
 
 
 class OpenAITool(BaseModel):

@@ -358,7 +358,7 @@ class WorkBuddyClient:
         self, query: str, thinking: bool = False, model: str = "hy3",
         multi_medias: list | None = None, attachments: list | None = None,
         conversation_id: str | None = None, tools: list | None = None,
-    ) -> Tuple[str, str, dict, list]:
+    ) -> Tuple[str, str, dict, list, list]:
         body = self._query_body(query, thinking, model, multi_medias, attachments, tools=tools)
         data = await self.chat_completion_json(body)
         choice = (data.get("choices") or [{}])[0]
@@ -371,15 +371,14 @@ class WorkBuddyClient:
             think = (think + "\n" if think else "") + reasoning
 
         native_tc = message.get("tool_calls") or []
-        if native_tc:
-            tc_text = self._native_tool_calls_to_text(native_tc)
-            content = (content + "\n" if content else "") + tc_text
+        # 原生 tool_calls 不再转文本混入 content — 由 routes.py 直接消费第五返回值
+        native_tool_calls = native_tc
 
         usage = data.get("usage") or {}
         return content, think, {
             "promptTokens": usage.get("prompt_tokens") or 0,
             "completionTokens": usage.get("completion_tokens") or 0,
-        }, []
+        }, [], native_tool_calls
 
     async def stream_api(
         self, query: str, thinking: bool = False, model: str = "hy3",
@@ -390,6 +389,7 @@ class WorkBuddyClient:
         body["stream_options"] = {"include_usage": True}
         client = httpx.AsyncClient(timeout=TIMEOUT)
         tc_acc: dict = {}
+        finish_reason: str = ""
         try:
             resp = await self.chat_completion(body, stream=True, client=client)
             async for line in resp.aiter_lines():
@@ -397,11 +397,12 @@ class WorkBuddyClient:
                     continue
                 payload = line[5:].strip()
                 if payload == "[DONE]":
+                    # 流结束：yield 原生 tool_calls（按 index 合并）与 finish_reason
+                    # 拆为独立事件，routes.py 不再走文本→解析
                     merged = self._merge_stream_tool_calls(tc_acc, None)
                     if merged:
-                        text = self._native_tool_calls_to_text(merged)
-                        if text:
-                            yield {"type": "text", "content": "\n" + text + "\n"}
+                        yield {"type": "tool_calls", "calls": merged}
+                    yield {"type": "finish", "reason": finish_reason or "stop"}
                     break
                 try:
                     chunk = json.loads(payload)
@@ -422,7 +423,10 @@ class WorkBuddyClient:
                     if reasoning:
                         yield {"type": "text", "content": THINK_OPEN + reasoning + THINK_CLOSE}
                     if delta.get("tool_calls"):
+                        # 仅累积，不 yield 文本（避免被 StreamSieve 当成 MiMoML 标记误解析）
                         self._merge_stream_tool_calls(tc_acc, delta["tool_calls"])
+                    if choice.get("finish_reason"):
+                        finish_reason = choice["finish_reason"]
         finally:
             await client.aclose()
 

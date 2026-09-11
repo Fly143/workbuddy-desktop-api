@@ -42,26 +42,23 @@ def _safe_get(d: Any, key: str, default: Any = None) -> Any:
 # ─── 构建工具提示词 ──────────────────────────────────────────
 
 def build_tool_prompt(tools: List[Dict[str, Any]], passthrough: bool = False) -> str:
-    """构建 WorkBuddyML 工具提示词，动态提取客户端 tools 的名称和描述。
+    """构建工具提示词。
 
-    passthrough=True 时跳过格式说明书，直接嵌入原始工具定义 JSON，
-    适合 Roo Code / Cline 等自带工具定义的客户端，减少格式冲突。
+    passthrough=True：完全依赖上游原生 OpenAI tools 协议。
+      工具定义已通过 `body["tools"]` 发送给上游，prompt 中不塞任何
+      WorkBuddyML 说明书或英文指令，避免与上游原生 tool_calls 响应冲突。
+      适用于上游已实现 OpenAI 原生 tool_calls 协议的 WorkBuddy 上游
+      （`copilot.tencent.com/v2/chat/completions` 实测支持）。
+
+    passthrough=False：在 prompt 中嵌入 WorkBuddyML 文本格式说明书，
+      让模型在正文里输出 `<|WorkBuddyML|tool_calls>...</|>` 供
+      `extract_tool_call` 解析。
     """
     if not tools:
         return ""
 
     if passthrough:
-        # 透传模式：跳过冗长的 WorkBuddyML 格式说明书，直接嵌入原始工具定义
-        # 用更简洁的指令让模型自己决定用什么格式输出工具调用
-        import json
-        tools_json = json.dumps(tools, indent=2, ensure_ascii=False)
-        return (
-            "You have the following tools available. "
-            "Use your native tool-calling format when you need to invoke one.\n\n"
-            f"<tools>\n{tools_json}\n</tools>\n\n"
-            "When you use a tool, use whatever tool call format you normally use "
-            "(TOOL_CALL:, <|WorkBuddyML|tool_calls>, or the standard format you prefer)."
-        )
+        return ""
 
 
     prompt = """TOOL CALL FORMAT — FOLLOW EXACTLY:

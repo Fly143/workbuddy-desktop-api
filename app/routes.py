@@ -325,10 +325,14 @@ def _split_think(text: str) -> Tuple[str, str]:
 def _build_response(
     msg_id: str, model: str,
     content: str = None, tool_calls: list = None,
+    reasoning: str = None,
     finish_reason: str = "stop", usage: dict = None
 ) -> OpenAIResponse:
     """统一构建 OpenAI 非流式响应。"""
-    message = OpenAIMessage(role="assistant", content=content, tool_calls=tool_calls)
+    message = OpenAIMessage(
+        role="assistant", content=content, tool_calls=tool_calls,
+        reasoning=reasoning, reasoning_content=reasoning,
+    )
     usage_obj = None
     if usage:
         usage_obj = OpenAIUsage(
@@ -342,6 +346,25 @@ def _build_response(
         choices=[OpenAIChoice(index=0, message=message, finish_reason=finish_reason)],
         usage=usage_obj or OpenAIUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
     )
+
+
+def _normalize_native_tool_calls(native_tool_calls: list) -> list:
+    """把上游 message.tool_calls 规整为 OpenAI 标准格式。
+
+    上游结构：{"id": ..., "type": "function", "function": {"name": ..., "arguments": "..."}}
+    这里只补 type 缺失、做基本字段校验，不改 id 与 function。
+    """
+    result = []
+    for tc in native_tool_calls or []:
+        if not isinstance(tc, dict):
+            continue
+        fn = tc.get("function") or {}
+        if not fn.get("name"):
+            continue
+        item = dict(tc)
+        item.setdefault("type", "function")
+        result.append(item)
+    return result
 
 
 def _build_chunk(
@@ -504,7 +527,7 @@ async def chat_completions(
             request.messages, tools=tools_dict, passthrough=passthrough_mode
         )
     try:
-        content, think_content, usage, citations = await client.call_api(
+        content, think_content, usage, citations, native_tool_calls = await client.call_api(
             query, thinking, effective_model, multi_medias, conversation_id=conv_id,
             tools=tools_dict)
 
@@ -516,19 +539,20 @@ async def chat_completions(
         # 首次消息：记录真实指纹
         _update_session_fingerprint(account.user_id, conv_id, request.messages)
 
-        # 提取工具调用
-        # 注意顺序：clean_tool_text 会抹掉 TOOL_CALL: 文本，必须先抽取再清洗，
-        # 否则原生（tools_passthrough）返回的 tool_calls 会被清洗掉后解析为空。
+        # 优先用上游原生 tool_calls（passthrough=True 的主流路径）；
+        # 仅在没有原生响应时才回退到文本解析（passthrough=False / 上游异常）。
         tool_names = []
         tool_calls = None
-        if tools_dict:
+        if native_tool_calls:
+            tool_calls = _normalize_native_tool_calls(native_tool_calls)
+        if tools_dict and not tool_calls:
             tool_names = get_tool_names(tools_dict)
             result = extract_tool_call(content, tool_names)
             if result:
                 if result[0]:
-                    tool_calls = result[0]  # List[Dict]
+                    tool_calls = result[0]
                 if result[1] is not None:
-                    content = result[1]  # 使用清理后的文本（含 WorkBuddyML 残留清理）
+                    content = result[1]
 
         # 清理模型输出杂质
         content = _strip_tool_result_blocks(content)
@@ -545,6 +569,7 @@ async def chat_completions(
             return _build_response(
                 msg_id, request.model,
                 content=None, tool_calls=tool_calls,
+                reasoning=think_content,
                 finish_reason="tool_calls", usage=usage
             )
         else:
@@ -553,7 +578,9 @@ async def chat_completions(
                 full_content = f"{THINK_OPEN}{think_content}{THINK_CLOSE}\n{content}"
             return _build_response(
                 msg_id, request.model,
-                content=full_content, finish_reason="stop", usage=usage
+                content=full_content,
+                reasoning=think_content,
+                finish_reason="stop", usage=usage
             )
 
     except WorkBuddyApiError as e:
@@ -614,23 +641,29 @@ async def _stream_response(
     try:
         if has_tools:
             # ═══════════════════════════════════════════════════
-            # 有工具定义：reasoning 流式，正文通过筛分流式
-            # sieve 实时分离 TOOL_CALL 文本与普通正文
+            # 有工具定义：上游原生 OpenAI tool_calls 直接透传
+            # 正文经 think 标签解析后流式输出（无工具调用时）
             # ═══════════════════════════════════════════════════
             tool_names = get_tool_names(tools)
-            sieve = StreamSieve(
-                mode='tool_call',
-                parse_fn=lambda text: extract_tool_call(text, tool_names),
-            )
-            collected_tool_calls = []
-            content_buffer_chunks = []  # 缓冲正文：命中工具调用时丢弃，否则收尾补发
+            collected_tool_calls = []  # 原生 tool_calls 累积
+            content_buffer_chunks = []
             in_think = False
             buffer = ""
             last_usage = None
+            upstream_finish_reason = ""
 
-            pending_text = ""
             async for sse_data in client.stream_api(query, thinking, model, multi_medias, tools=tools):
-                if sse_data.get("type") == "usage":
+                ev_type = sse_data.get("type")
+                if ev_type == "tool_calls":
+                    # 上游原生 tool_calls（已按 index 合并）→ 直接累加
+                    for tc in sse_data.get("calls", []) or []:
+                        if tc.get("function", {}).get("name"):
+                            collected_tool_calls.append(tc)
+                    continue
+                if ev_type == "finish":
+                    upstream_finish_reason = sse_data.get("reason") or "stop"
+                    continue
+                if ev_type == "usage":
                     last_usage = sse_data
                     continue
                 chunk = sse_data.get("content", "")
@@ -646,27 +679,18 @@ async def _stream_response(
                         if idx != -1:
                             safe, keep = _safe_flush(buffer[:idx])
                             if safe:
-                                # Feed through sieve — stream text, collect tool calls
-                                for ev in sieve.feed(safe):
-                                    if ev.type == 'text':
-                                        clean = _clean_response_text(ev.data, tool_names)
-                                        if clean:
-                                            content_buffer_chunks.append(clean)
-                                    elif ev.type == 'tool_calls':
-                                        collected_tool_calls.extend(ev.data)
+                                clean = _clean_response_text(safe, tool_names)
+                                if clean:
+                                    content_buffer_chunks.append(clean)
                             in_think = True
                             buffer = buffer[idx + len(THINK_OPEN):]
                             continue
 
                         safe, keep = _safe_flush(buffer)
                         if safe:
-                            for ev in sieve.feed(safe):
-                                if ev.type == 'text':
-                                    clean = _clean_response_text(ev.data, tool_names)
-                                    if clean:
-                                        content_buffer_chunks.append(clean)
-                                elif ev.type == 'tool_calls':
-                                    collected_tool_calls.extend(ev.data)
+                            clean = _clean_response_text(safe, tool_names)
+                            if clean:
+                                content_buffer_chunks.append(clean)
                         buffer = keep
                         break
                     else:
@@ -685,30 +709,23 @@ async def _stream_response(
                         buffer = keep
                         break
 
-            # 正文留在 buffer 中的追加到 sieve
+            # 正文留在 buffer 中的追加
             if buffer and not in_think:
-                for ev in sieve.feed(buffer):
-                    if ev.type == 'text':
-                        clean = _clean_response_text(ev.data, tool_names)
-                        if clean:
-                            content_buffer_chunks.append(clean)
-                    elif ev.type == 'tool_calls':
-                        collected_tool_calls.extend(ev.data)
-
-            # 刷新 sieve，回收最终残留 text/tool_calls
-            for ev in sieve.flush():
-                if ev.type == 'text':
-                    clean = _clean_response_text(ev.data, tool_names)
-                    if clean:
-                        content_buffer_chunks.append(clean)
-                elif ev.type == 'tool_calls':
-                    collected_tool_calls.extend(ev.data)
+                clean = _clean_response_text(buffer, tool_names)
+                if clean:
+                    content_buffer_chunks.append(clean)
+            elif buffer and in_think:
+                yield _build_chunk(msg_id, model, created=created_t, reasoning=buffer)
 
             if collected_tool_calls:
-                # 有工具调用 → 不发 content，只发 tool_calls
-                streaming_tc = [{**tc, "index": i} for i, tc in enumerate(collected_tool_calls)]
+                # 原生 tool_calls 直接输出（OpenAI 标准格式，附 index）
+                streaming_tc = []
+                for i, tc in enumerate(collected_tool_calls):
+                    item = {**tc, "index": i}
+                    streaming_tc.append(item)
                 yield _build_chunk(msg_id, model, created=created_t,
-                                   tool_calls=streaming_tc, finish_reason="tool_calls")
+                                   tool_calls=streaming_tc,
+                                   finish_reason=upstream_finish_reason or "tool_calls")
                 yield "data: [DONE]\n\n"
                 if last_usage:
                     _add_usage(model, last_usage.get("promptTokens", 0), last_usage.get("completionTokens", 0))
@@ -716,7 +733,6 @@ async def _stream_response(
                 return
 
             # 无工具调用：补发缓冲正文后再发 stop
-            # （带 tools 时正文先缓冲，避免同一条消息同时出现 content 与 tool_calls）
             for _buffered in content_buffer_chunks:
                 yield _build_chunk(msg_id, model, created=created_t, content=_buffered)
             yield _build_chunk(msg_id, model, created=created_t, finish_reason="stop")

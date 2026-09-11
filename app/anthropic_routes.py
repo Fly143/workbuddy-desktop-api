@@ -291,8 +291,20 @@ async def _anthropic_stream_think_wrapper(
         return events
 
     api_usage = {}
+    # 原生 tool_calls 直接透传；StreamSieve 文本协议作为 fallback
+    native_collected_tool_calls = []
+    upstream_finish_reason = ""
     async for ev in workbuddy_stream:
-        if ev.get("type") == "usage":
+        ev_type = ev.get("type")
+        if ev_type == "tool_calls":
+            for tc in ev.get("calls", []) or []:
+                if tc.get("function", {}).get("name"):
+                    native_collected_tool_calls.append(tc)
+            continue
+        if ev_type == "finish":
+            upstream_finish_reason = ev.get("reason") or "stop"
+            continue
+        if ev_type == "usage":
             api_usage = ev
             continue
         chunk = ev.get("content", "")
@@ -392,14 +404,16 @@ async def _anthropic_stream_think_wrapper(
                 collected_tool_calls.extend(ev.data)
 
     # --- 决定 stop_reason ---
+    # 优先用上游原生 tool_calls；无原生时回退到 StreamSieve 文本解析结果
+    final_tool_calls = native_collected_tool_calls or collected_tool_calls
     stop_reason = "end_turn"
-    if collected_tool_calls:
+    if final_tool_calls:
         stop_reason = "tool_use"
         # 有工具调用：不发 text，关闭可能已开启的 text block
         st.text_active = False  # 重置，不发 text stop
         st.any_text = False
         # 发 tool_use blocks
-        for tc in collected_tool_calls:
+        for tc in final_tool_calls:
             fn = tc.get("function", {})
             try:
                 arguments = json.loads(fn.get("arguments", "{}"))
@@ -567,7 +581,7 @@ async def anthropic_messages(
     # 非流式
     # ═══════════════════════════════════════════════════════════
     try:
-        content, think_content, usage, _ = await client.call_api(
+        content, think_content, usage, _, native_tool_calls = await client.call_api(
             query, False, model, multi_medias=multi_medias, conversation_id=conv_id,
             tools=tools_dict,
         )
@@ -575,14 +589,18 @@ async def anthropic_messages(
         # 保存用量
         if usage:
             _add_usage(model, usage.get("promptTokens", 0), usage.get("completionTokens", 0))
+            # 优先用上游原生 tool_calls；无原生时回退到文本解析
+            tc_list = _normalize_native_tool_calls(native_tool_calls) if native_tool_calls else None
             _update_session_tokens(account.user_id, conv_id, usage.get("promptTokens", 0))
 
         # 清理模型输出
         content = _strip_tool_result_blocks(content)
 
-        # 提取工具调用
+        # 提取工具调用：优先原生，无则文本
         tool_calls = None
-        if tool_names:
+        if tc_list:
+            tool_calls = tc_list
+        elif tool_names:
             result = extract_tool_call(content, tool_names)
             if result:
                 if result[0]:

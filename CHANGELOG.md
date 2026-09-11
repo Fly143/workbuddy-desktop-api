@@ -2,6 +2,28 @@
 
 本文件记录 workbuddy-desktop-api 的重要变更。协议层历史继承自 [xiaomi-mimo-desktop-api](https://github.com/Fly143/xiaomi-mimo-desktop-api)。
 
+## [v1.1.7] — 2026-09-11
+
+### 修复
+- **Desktop 上游原生 tool_calls 直通** — 实测 WorkBuddy 上游（`copilot.tencent.com/v2/chat/completions`）
+  100% OpenAI 兼容，会发送 `delta.tool_calls` 分片累加并以 `finish_reason="tool_calls"` 收尾。
+  之前代理层把原生 tool_calls 转成 `TOOL_CALL: name(args)` 文本让 StreamSieve 再解析回 tool_calls，
+  绕了一圈。改造：
+  - `WorkBuddyClient.stream_api`：原生 `delta.tool_calls` 仅累积不 yield 文本；流结束时 yield
+    `{"type": "tool_calls", "calls": merged}` 事件 + `{"type": "finish", "reason": ...}`
+  - `WorkBuddyClient.call_api`：原生 `message.tool_calls` 直接作为第五返回值透传，不再混入 content
+  - `routes._stream_response`：has_tools 分支处理原生 tool_calls/finish 事件，删 StreamSieve 文本→解析路径
+  - `routes.chat_completions`：优先用 call_api 返回的 native_tool_calls；仅无原生响应时才回退文本解析
+  - `anthropic_routes.py`：流式 + 非流式同步改造（流式保留 StreamSieve 作为 fallback）
+  - `models.OpenAIMessage`：增加 `reasoning` / `reasoning_content` 字段；`_build_response` 在
+    非流式响应（含工具调用）中带出 think_content，不再丢失
+  - `build_tool_prompt` passthrough=True 改为直接 return ""，prompt 中不塞任何工具指令，
+    完全依赖上游原生协议
+
+### 变更（行为）
+- prompt 端不再有英文"You have the following tools available..."指令（之前是 fallback 引导，
+ 现在 Desktop 上游原生协议已足够）
+
 ## [v1.1.6] — 2026-09-11
 
 ### 修复
