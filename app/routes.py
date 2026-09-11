@@ -965,7 +965,7 @@ async def test_account_endpoint(request: TestAccountRequest, username: str = Dep
             uid=request.wb_uid,
         )
         client = WorkBuddyClient(account)
-        content, _, _, _ = await client.call_api("hi", False)
+        content, _, _, _, _ = await client.call_api("hi", False)
         return {"success": True, "response": content}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -1467,7 +1467,7 @@ async def _do_response_chat(body: dict, account) -> tuple:
 
     thinking = False
     try:
-        content, think_content, usage, citations = await client.call_api(
+        content, think_content, usage, citations, native_tool_calls = await client.call_api(
             query, thinking, effective_model, multi_medias, tools=tools_dict
         )
     except WorkBuddyApiError as e:
