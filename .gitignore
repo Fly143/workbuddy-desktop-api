@@ -1,0 +1,14 @@
+config.json
+.secret_key
+__pycache__/
+*.pyc
+sessions.json
+usage.json
+app/responses.json
+.anthropic_batches/
+.venv/
+venv/
+*.apk
+*.bak
+.env
+NUL

@@ -1,0 +1,10 @@
+venv/
+__pycache__/
+*.pyc
+.git/
+config.json
+.anthropic_batches/
+usage.json
+responses.json
+sessions.json
+*.log

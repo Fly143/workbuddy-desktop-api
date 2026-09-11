@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>workbuddy-desktop-api</title>
+<style>
+:root{--primary:#f97316;--primary-hover:#ea580c;--ok:#22c55e;--err:#ef4444;--muted:#94a3b8;--bg:#0c0a09;--card:#1c1917;--input:#292524;--border:#44403c;--text:#fafaf9}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);min-height:100vh;line-height:1.6}
+.wrap{max-width:860px;margin:0 auto;padding:36px 20px 60px}
+.header{position:relative;margin-bottom:28px}
+.header h1{font-size:1.7rem;font-weight:700;background:linear-gradient(135deg,#f97316,#fbbf24);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.header p{color:var(--muted);font-size:.92rem;margin-top:4px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:14px;margin-bottom:20px;overflow:visible}
+.tabs{display:flex;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.tab{flex:1;min-width:80px;text-align:center;padding:12px 8px;cursor:pointer;color:var(--muted);font-size:13px;font-weight:600;border-bottom:2px solid transparent;user-select:none}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--primary);border-bottom-color:var(--primary);background:rgba(249,115,22,.06)}
+.tab-content{padding:18px}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+input[type=text],input[type=password],textarea{width:100%;padding:11px 14px;background:var(--input);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;outline:none}
+input:focus,textarea:focus{border-color:var(--primary)}
+textarea{min-height:90px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;resize:vertical}
+.field{margin-bottom:12px}
+button{padding:10px 16px;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;color:#fff;background:var(--primary);transition:background .15s}
+button:hover{background:var(--primary-hover)}
+button:disabled{opacity:.5;cursor:not-allowed}
+button.ghost{background:transparent;border:1px solid var(--border);color:var(--text)}
+button.ok{background:var(--ok)}
+button.danger{background:var(--err)}
+.btn-group{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.btn-group button{flex:1;min-width:90px}
+.status{padding:10px 12px;border-radius:8px;font-size:13px;margin:10px 0;white-space:pre-wrap}
+.status.info{background:rgba(148,163,184,.12);color:var(--muted)}
+.status.ok{background:rgba(34,197,94,.12);color:var(--ok)}
+.status.err{background:rgba(239,68,68,.12);color:var(--err)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--border)}
+th{color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase}
+.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+.hint{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.6}
+code{background:var(--input);padding:2px 6px;border-radius:4px;font-size:12px;color:#fdba74}
+ol{margin:8px 0 8px 20px;color:var(--muted);font-size:13px;line-height:1.8}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <h1>workbuddy-desktop-api</h1>
+    <p>WorkBuddy Desktop 会话 → OpenAI + Anthropic 兼容 · 管理后台（浏览器 Basic 登录）</p>
+  </div>
+
+  <div class="card" style="padding:0">
+    <div class="tabs">
+      <div class="tab active" data-t="desktop">Desktop 导入</div>
+      <div class="tab" data-t="accounts">账号</div>
+      <div class="tab" data-t="apikey">API Key</div>
+      <div class="tab" data-t="usage">用量统计</div>
+    </div>
+    <div class="tab-content">
+
+      <!-- Desktop 导入 -->
+      <div id="panel-desktop" class="tab-panel active">
+        <div class="status info">读取本机 WorkBuddy Desktop 的 passToken。请先登录 Desktop，再<strong>完全退出</strong>（它会锁 cookie 库），然后点检测。</div>
+        <div class="btn-group">
+          <button onclick="detectDesktop()">自动检测</button>
+          <button class="ok" id="btnImport" disabled onclick="importDesktop()">导入账号</button>
+          <button class="ghost" onclick="loadAccounts()">刷新账号</button>
+        </div>
+        <div id="desktopResult"></div>
+      </div>
+
+      <!-- 账号 -->
+      <div id="panel-accounts" class="tab-panel">
+        <div id="accountsBox"></div>
+        <div class="btn-group">
+          <button class="ghost" onclick="loadAccounts()">刷新</button>
+          <button onclick="testAllAccounts()">测试全部</button>
+        </div>
+      </div>
+
+      <!-- API Key / 配置 -->
+      <div id="panel-apikey" class="tab-panel">
+        <div class="field">
+          <label>对外 API Key（多个用逗号分隔）</label>
+          <input type="text" id="apiKeys" placeholder="sk-workbuddy, sk-other"/>
+        </div>
+        <div class="field">
+          <label>管理员密码</label>
+          <input type="password" id="adminPassword" placeholder="留空 = 不修改"/>
+          <div class="hint">修改后浏览器会重新弹出登录框。落盘为加密密文。</div>
+        </div>
+        <div class="field">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="passthroughToggle" style="width:auto"/> 工具透传模式
+          </label>
+          <div class="hint">默认开启。跳过 WorkBuddyML 格式说明书，走原生 tools/tool_calls（Desktop 推荐）。</div>
+        </div>
+        <div class="field">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="compressModeToggle" style="width:auto"/> 上下文压缩（LLM 摘要）
+          </label>
+          <div class="hint">开启=压缩摘要，关闭=滑动窗口裁剪。阈值均为 80%。</div>
+        </div>
+        <button style="width:100%" onclick="saveConfig()">保存配置</button>
+        <div id="configResult"></div>
+      </div>
+
+      <!-- 用量 -->
+      <div id="panel-usage" class="tab-panel">
+        <div id="usageBox"></div>
+        <div class="btn-group">
+          <button class="ghost" onclick="loadUsage()">刷新</button>
+          <button class="danger" onclick="clearUsage()">清空</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="card" style="padding:16px 18px">
+    <div class="hint">
+      调用示例：
+      <div style="margin-top:8px"><code>curl http://127.0.0.1:8080/v1/chat/completions -H "Authorization: Bearer sk-workbuddy" -H "Content-Type: application/json" -d '{"model":"hy4-preview","messages":[{"role":"user","content":"hi"}]}'</code></div>
+      模型：<code>hy4-preview</code> · <code>hy3</code>
+    </div>
+  </div>
+</div>
+
+<script>
+let detected = null;
+let cfg = {};
+
+function $(id){ return document.getElementById(id); }
+function status(id, type, msg){ $(id).innerHTML = `<div class="status ${type}">${msg}</div>`; }
+
+document.querySelectorAll('.tab').forEach(el => {
+  el.onclick = () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    el.classList.add('active');
+    $('panel-' + el.dataset.t).classList.add('active');
+    if (el.dataset.t === 'accounts') loadAccounts();
+    if (el.dataset.t === 'usage') loadUsage();
+    if (el.dataset.t === 'apikey') loadConfig();
+  };
+});
+
+async function detectDesktop() {
+  status('desktopResult', 'info', '检测中…');
+  detected = null;
+  $('btnImport').disabled = true;
+  try {
+    const r = await fetch('/api/desktop/auto-import');
+    const d = await r.json();
+    if (!d.found) {
+      status('desktopResult', 'err', d.error || '未找到 passToken');
+      return;
+    }
+    detected = d;
+    const parts = [];
+    if (d.wbAccessToken) parts.push('passToken: 已读取');
+    if (d.uid) parts.push('UID: ' + d.uid);
+    status('desktopResult', 'ok', '检测成功\n' + parts.join('\n') + '\n来源: ' + (d.source || 'desktop-cookie'));
+    $('btnImport').disabled = false;
+  } catch (e) {
+    status('desktopResult', 'err', '检测失败: ' + e.message);
+  }
+}
+
+async function importDesktop() {
+  if (!detected) return;
+  status('desktopResult', 'info', '导入中…');
+  try {
+    const r = await fetch('/api/desktop/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(detected)
+    });
+    const d = await r.json();
+    if (!d.ok) { status('desktopResult', 'err', d.error || d.detail || '导入失败'); return; }
+    status('desktopResult', 'ok', '导入成功\nvalidated=' + d.validated + (d.detail ? '\n' + d.detail : ''));
+    loadAccounts();
+  } catch (e) {
+    status('desktopResult', 'err', '导入失败: ' + e.message);
+  }
+}
+
+async function loadAccounts() {
+  try {
+    const r = await fetch('/api/accounts');
+    const d = await r.json();
+    const list = d.accounts || [];
+    if (!list.length) {
+      $('accountsBox').innerHTML = '<div class="status info">暂无账号，请在「Desktop 导入」添加</div>';
+      return;
+    }
+    let html = '<table><thead><tr><th>UID</th><th>Token</th><th>状态</th><th>登录时间</th><th>操作</th></tr></thead><tbody>';
+    list.forEach((a, i) => {
+      html += `<tr>
+        <td class="mono">${a.user_id || a.uid || '—'}</td>
+        <td class="mono">${a.token_masked || '—'}</td>
+        <td>${a.is_valid ? '✅' : '⚪'}</td>
+        <td>${a.login_time || '—'}</td>
+        <td>
+          <button class="ghost" style="padding:4px 8px;font-size:12px" onclick="testOne(${i})">测试</button>
+          <button class="danger" style="padding:4px 8px;font-size:12px" onclick="delOne(${i})">删除</button>
+        </td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    $('accountsBox').innerHTML = html;
+  } catch (e) {
+    $('accountsBox').innerHTML = `<div class="status err">加载失败: ${e.message}</div>`;
+  }
+}
+
+async function testOne(i) {
+  try {
+    const r = await fetch('/api/accounts/' + i + '/test', { method: 'POST' });
+    const d = await r.json();
+    alert(d.ok ? ('连接成功: ' + (d.detail || '')) : ('失败: ' + (d.detail || d.error || '')));
+    loadAccounts();
+  } catch (e) { alert(e.message); }
+}
+
+async function delOne(i) {
+  if (!confirm('确定删除此账号？')) return;
+  try {
+    await fetch('/api/accounts/' + i, { method: 'DELETE' });
+    loadAccounts();
+  } catch (e) { alert(e.message); }
+}
+
+async function testAllAccounts() {
+  const r = await fetch('/api/accounts');
+  const d = await r.json();
+  const n = (d.accounts || []).length;
+  for (let i = 0; i < n; i++) {
+    try { await fetch('/api/accounts/' + i + '/test', { method: 'POST' }); } catch {}
+  }
+  loadAccounts();
+}
+
+async function loadConfig() {
+  try {
+    const r = await fetch('/api/config');
+    cfg = await r.json();
+    $('apiKeys').value = cfg.api_keys || '';
+    $('adminPassword').value = '';
+    $('passthroughToggle').checked = !!cfg.tools_passthrough;
+    $('compressModeToggle').checked = cfg.compression_mode === 'compress';
+  } catch (e) {}
+}
+
+async function saveConfig() {
+  const body = {
+    api_keys: $('apiKeys').value,
+    tools_passthrough: $('passthroughToggle').checked,
+    compression_mode: $('compressModeToggle').checked ? 'compress' : 'truncation'
+  };
+  const pw = $('adminPassword').value;
+  if (pw) body.admin_password = pw;
+  try {
+    const r = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    status('configResult', 'ok', '配置已保存' + (pw ? '（密码已更新，下次操作需用新密码）' : ''));
+    setTimeout(() => $('configResult').innerHTML = '', 3000);
+  } catch (e) {
+    status('configResult', 'err', '保存失败: ' + e.message);
+  }
+}
+
+async function loadUsage() {
+  $('usageBox').innerHTML = '<div class="status info">加载中…</div>';
+  try {
+    const r = await fetch('/api/usage');
+    const d = await r.json();
+    const u = d.usage || {};
+    const keys = Object.keys(u);
+    if (!keys.length) {
+      $('usageBox').innerHTML = '<div class="status info">暂无用量数据</div>';
+      return;
+    }
+    let html = '<table><thead><tr><th>模型</th><th>请求</th><th>输入</th><th>输出</th><th>总计</th></tr></thead><tbody>';
+    let sr=0,si=0,so=0,st=0;
+    keys.forEach(m => {
+      const x = u[m] || {};
+      sr += x.requests||0; si += x.prompt_tokens||0; so += x.completion_tokens||0; st += x.total_tokens||0;
+      html += `<tr><td>${m}</td><td>${x.requests||0}</td><td>${x.prompt_tokens||0}</td><td>${x.completion_tokens||0}</td><td>${x.total_tokens||0}</td></tr>`;
+    });
+    html += `<tr style="font-weight:600"><td>合计</td><td>${sr}</td><td>${si}</td><td>${so}</td><td>${st}</td></tr></tbody></table>`;
+    $('usageBox').innerHTML = html;
+  } catch (e) {
+    $('usageBox').innerHTML = `<div class="status err">加载失败: ${e.message}</div>`;
+  }
+}
+
+async function clearUsage() {
+  if (!confirm('确定清空全部用量数据？')) return;
+  try {
+    await fetch('/api/usage', { method: 'DELETE' });
+    loadUsage();
+  } catch (e) { alert(e.message); }
+}
+
+loadConfig();
+</script>
+</body>
+</html>
