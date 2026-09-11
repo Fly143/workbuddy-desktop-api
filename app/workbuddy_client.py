@@ -27,8 +27,11 @@ from .workbuddy_session import (
 )
 
 TIMEOUT = 180.0
-# 上游不传 max_tokens 时默认只有几十 token，会截断输出
-DEFAULT_MAX_TOKENS = 4096
+# 不要替用户塞默认 max_tokens。
+# 实测（hy3）：max_tokens 是「reasoning + 正文」的合计预算——
+#   - 不传：上游不限，模型充分思考后正常输出正文（写 3000 字长文正常推进）
+#   - 传 4096：预算被 reasoning 全部吃光，finish_reason=length、正文 0 字符
+# 所以代理层猜测一个值极易适得其反，未显式指定时保持透传，由上游/调用方决定。
 THINK_OPEN = "<think>"
 THINK_CLOSE = "</think>"
 
@@ -96,9 +99,6 @@ class WorkBuddyClient:
         out["model"] = bare_model(out.get("model", ""))
         # 上游只支持流式，非流式由本层聚合
         out["stream"] = True
-        # 上游默认 max_tokens 很小（约几十），不显式指定会截断输出
-        if not out.get("max_tokens"):
-            out["max_tokens"] = DEFAULT_MAX_TOKENS
         if stream:
             out["stream_options"] = {"include_usage": True}
         return out

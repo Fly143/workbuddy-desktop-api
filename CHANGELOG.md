@@ -26,7 +26,9 @@
 ### 修复
 - **非流式请求被上游拒绝** — 上游仅接受 `stream=true`（非流式返回 `11101`），
   改为本地聚合 SSE 后返回完整 `chat.completion`
-- **输出被截断** — 上游默认 `max_tokens` 仅几十 token，未显式指定时补全为 4096
+- **补 `max_tokens` 默认值 4096** — 当时观察到输出被截断而补，实为误判
+  （真因是上面的 `clean_tool_text` 顺序问题）。该默认值会吃光思考预算导致正文为空，
+  **已于 v1.1.2 移除，改为透传**（详见 v1.1.2 条目）
 - **原生 tool_calls 丢失（上游仓库既有 bug）** — `clean_tool_text` 在 `extract_tool_call`
   之前抹掉了 `TOOL_CALL:` 文本，导致 passthrough 模式下工具调用恒为空；调整为先抽取再清洗
 
