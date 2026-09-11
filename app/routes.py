@@ -553,11 +553,13 @@ async def chat_completions(
 
         # 清理模型输出杂质
         content = _strip_tool_result_blocks(content)
-        content = clean_tool_text(content)
 
         msg_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
 
         # 清洗工具名前缀
+        # 未命中工具调用时兜底清洗标记残留；命中时 extract_tool_call 已返回清洗后文本，不可再 clean（会抹掉标记）
+        if not tool_calls:
+            content = clean_tool_text(content)
         content = _strip_tool_name_prefix(content, tool_names)
 
         if tool_calls:
@@ -648,7 +650,7 @@ async def _stream_response(
                 parse_fn=lambda text: extract_tool_call(text, tool_names),
             )
             collected_tool_calls = []
-            content_buffer_chunks = []  # 收集 content（工具调用时丢弃）
+            content_buffer_chunks = []  # 缓冲正文：命中工具调用时丢弃，否则收尾补发
             in_think = False
             buffer = ""
             last_usage = None
@@ -677,7 +679,6 @@ async def _stream_response(
                                         clean = _clean_response_text(ev.data, tool_names)
                                         if clean:
                                             content_buffer_chunks.append(clean)
-                                            yield _build_chunk(msg_id, model, created=created_t, content=clean)
                                     elif ev.type == 'tool_calls':
                                         collected_tool_calls.extend(ev.data)
                             in_think = True
@@ -691,7 +692,6 @@ async def _stream_response(
                                     clean = _clean_response_text(ev.data, tool_names)
                                     if clean:
                                         content_buffer_chunks.append(clean)
-                                        yield _build_chunk(msg_id, model, created=created_t, content=clean)
                                 elif ev.type == 'tool_calls':
                                     collected_tool_calls.extend(ev.data)
                         buffer = keep
@@ -719,7 +719,6 @@ async def _stream_response(
                         clean = _clean_response_text(ev.data, tool_names)
                         if clean:
                             content_buffer_chunks.append(clean)
-                            yield _build_chunk(msg_id, model, created=created_t, content=clean)
                     elif ev.type == 'tool_calls':
                         collected_tool_calls.extend(ev.data)
 
@@ -729,7 +728,6 @@ async def _stream_response(
                     clean = _clean_response_text(ev.data, tool_names)
                     if clean:
                         content_buffer_chunks.append(clean)
-                        yield _build_chunk(msg_id, model, created=created_t, content=clean)
                 elif ev.type == 'tool_calls':
                     collected_tool_calls.extend(ev.data)
 
@@ -744,7 +742,10 @@ async def _stream_response(
                     _update_session_tokens(account_id, conv_id, last_usage.get("promptTokens", 0))
                 return
 
-            # 无工具调用：content 已在流中发出，只需发 stop
+            # 无工具调用：补发缓冲正文后再发 stop
+            # （带 tools 时正文先缓冲，避免同一条消息同时出现 content 与 tool_calls）
+            for _buffered in content_buffer_chunks:
+                yield _build_chunk(msg_id, model, created=created_t, content=_buffered)
             yield _build_chunk(msg_id, model, created=created_t, finish_reason="stop")
             yield "data: [DONE]\n\n"
             if last_usage:
@@ -1553,7 +1554,6 @@ async def _do_response_chat(body: dict, account) -> tuple:
 
     # 清理输出
     content = _strip_tool_result_blocks(content)
-    content = clean_tool_text(content)
 
     # 额外处理：模型可能输出多个 think 块，_parse_think_tags 只剥除了第一个
     remaining_thinks = []
@@ -1589,6 +1589,9 @@ async def _do_response_chat(body: dict, account) -> tuple:
             if result[1] is not None:
                 content = result[1]  # 使用清理后的文本（含 WorkBuddyML 残留清理）
 
+    # 未命中工具调用时兜底清洗标记残留；命中时 extract_tool_call 已返回清洗后文本，不可再 clean（会抹掉标记）
+    if not tool_calls:
+        content = clean_tool_text(content)
     content = _strip_tool_name_prefix(content, tool_names)
 
     if tool_calls:
