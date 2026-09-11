@@ -528,28 +528,16 @@ async def anthropic_messages(
     # 续接会话时只发增量消息（WorkBuddy 服务端已有 conversationId 上下文）
     # 新会话时构建全量 query，超长则根据模式裁剪或压缩
     client = WorkBuddyClient(account)
-    if conv_is_new and should_compress(msgs_as_objects):
+    # 上游无状态：始终携带完整历史，理由见 routes.py 同名修复注释
+    if should_compress(msgs_as_objects):
         mode = config_manager.config.compression_mode
         if mode == "compress":
             _, msgs_as_objects = await compress_messages(msgs_as_objects, model, client)
         else:
             msgs_as_objects = truncate_messages(msgs_as_objects)
-    if conv_is_new:
-        chunks = build_chunked_queries(
-            msgs_as_objects, tools=tools_dict
-        )
-        query = chunks[-1]
-        for warmup_query in chunks[:-1]:
-            try:
-                await client.call_api(warmup_query, False, model, conversation_id=conv_id)
-                print(f"[QueryGuard] Sent warmup chunk ({len(warmup_query)} chars) to conv {conv_id[:8]}")
-            except Exception as e:
-                print(f"[QueryGuard] Warmup chunk failed: {e}")
-    else:
-        query = build_query_from_messages(
-            msgs_as_objects, tools=tools_dict,
-            continuation=True
-        )
+    query = build_query_from_messages(
+        msgs_as_objects, tools=tools_dict
+    )
 
     # ── 工具名（用于后续提取） ──
     tool_names = get_tool_names(tools_dict) if tools_dict else None

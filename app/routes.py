@@ -453,27 +453,19 @@ async def chat_completions(
 
     # 续接会话时只发增量消息（WorkBuddy 服务端已有 conversationId 上下文）
     # 新会话时构建全量 query，超长则根据模式裁剪或压缩
-    needs_compression = conv_is_new and should_compress(request.messages)
+    # 上游无状态（/api/route 无 conversation 概念）：每次请求都必须携带完整历史。
+    # 增量发送（continuation）与分批 warmup 都依赖服务端 conversationId 累积上下文，
+    # 在此上游上会被静默丢弃：历史丢失，且每个 warmup chunk 白耗一次完整生成。
+    # 超长由 build_query_from_messages 内的 QueryGuard 滑动窗口兜底，
+    # 仍超阈值则按 compression_mode 压缩或裁剪。
+    needs_compression = should_compress(request.messages)
 
     if not needs_compression:
-        if conv_is_new:
-            chunks = build_chunked_queries(
-                request.messages, tools=tools_dict, passthrough=passthrough_mode
-            )
-            query = chunks[-1]
-            for warmup_query in chunks[:-1]:
-                try:
-                    await client.call_api(warmup_query, False, effective_model, conversation_id=conv_id)
-                    print(f"[QueryGuard] Sent warmup chunk ({len(warmup_query)} chars) to conv {conv_id[:8]}")
-                except Exception as e:
-                    print(f"[QueryGuard] Warmup chunk failed: {e}")
-        else:
-            query = build_query_from_messages(
-                request.messages, tools=tools_dict, passthrough=passthrough_mode,
-                continuation=True
-            )
+        query = build_query_from_messages(
+            request.messages, tools=tools_dict, passthrough=passthrough_mode
+        )
     else:
-        # 新会话且超长：根据 compression_mode 选择处理方式
+        # 超长：根据 compression_mode 选择处理方式
         mode = config_manager.config.compression_mode
         if mode == "compress":
             # LLM 压缩模式：流式响应内部先提示再压缩
@@ -482,15 +474,9 @@ async def chat_completions(
             # 裁剪模式：直接裁剪，不需要 LLM 调用
             request.messages = truncate_messages(request.messages)
             _update_session_fingerprint(account.user_id, conv_id, request.messages)
-            chunks = build_chunked_queries(
+            query = build_query_from_messages(
                 request.messages, tools=tools_dict, passthrough=passthrough_mode
             )
-            query = chunks[-1]
-            for warmup_query in chunks[:-1]:
-                try:
-                    await client.call_api(warmup_query, False, effective_model, conversation_id=conv_id)
-                except Exception as e:
-                    print(f"[QueryGuard] Warmup chunk failed: {e}")
             needs_compression = False  # 已裁剪，不需要流式压缩
 
     # 流式响应
@@ -515,15 +501,9 @@ async def chat_completions(
     if needs_compression:
         # 静默压缩（用户等待中，不额外提示）
         _, request.messages = await compress_messages(request.messages, effective_model, client)
-        chunks = build_chunked_queries(
+        query = build_query_from_messages(
             request.messages, tools=tools_dict, passthrough=passthrough_mode
         )
-        query = chunks[-1]
-        for warmup_query in chunks[:-1]:
-            try:
-                await client.call_api(warmup_query, False, effective_model, conversation_id=conv_id)
-            except Exception as e:
-                print(f"[QueryGuard] Warmup chunk failed: {e}")
     try:
         content, think_content, usage, citations = await client.call_api(
             query, thinking, effective_model, multi_medias, conversation_id=conv_id,
@@ -625,15 +605,9 @@ async def _stream_response(
         else:
             yield _build_chunk(msg_id, model, created=created_t, content="正在裁剪上下文，请稍候...")
             compressed_msgs = truncate_messages(raw_messages)
-        chunks = build_chunked_queries(
+        query = build_query_from_messages(
             compressed_msgs, tools=raw_tools, passthrough=raw_passthrough
         )
-        query = chunks[-1]
-        for warmup_query in chunks[:-1]:
-            try:
-                await client.call_api(warmup_query, False, effective_model, conversation_id=conv_id)
-            except Exception as e:
-                print(f"[QueryGuard] Warmup chunk failed: {e}")
         yield _build_chunk(msg_id, model, created=created_t, content="处理完成，正在生成回复...")
 
     has_tools = tools is not None

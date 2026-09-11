@@ -2,6 +2,27 @@
 
 本文件记录 workbuddy-desktop-api 的重要变更。协议层历史继承自 [xiaomi-mimo-desktop-api](https://github.com/Fly143/xiaomi-mimo-desktop-api)。
 
+## [v1.1.4] — 2026-09-11
+
+### 修复
+- **多轮对话历史完全丢失（严重）** — 上游 `/api/route` 无状态（没有 conversationId 概念），
+  但代码沿用了 MiMo2API 网页端的会话机制：
+  - `continuation=True` 只发最后一条 user 消息 → 上游看不到任何历史
+  - `build_chunked_queries` 的 warmup chunk 靠 `conversation_id` 灌历史，
+    而 `MimoClient.call_api` 接收该参数后从未使用（`_query_body` 只构造单条 user 消息），
+    warmup 请求发出即丢弃，还白耗一次完整生成
+
+  实测（mimo-x-flash-preview）：
+    第1轮「记住这个数字：7788」
+    第2轮 带全量历史问「我刚才让你记住的数字是多少」
+    修复前 → "This is the first message in our conversation"
+    修复后 → 7788
+
+  改为每次请求都携带完整历史；超长由 `build_query_from_messages` 内的
+  QueryGuard 滑动窗口兜底，仍超阈值则按 `compression_mode` 压缩或裁剪。
+  影响 chat completions 与 Anthropic Messages 两条路径
+  （Responses 路径本就是全量构建，不受影响）。
+
 ## [v1.1.3] — 2026-09-11
 
 ### 变更
