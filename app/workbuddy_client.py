@@ -327,19 +327,6 @@ class WorkBuddyClient:
         return "".join(main), "\n".join(think)
 
     @staticmethod
-    def _native_tool_calls_to_text(tool_calls: list) -> str:
-        """OpenAI message.tool_calls → 文本，供 extract_tool_call / StreamSieve 解析。"""
-        lines = []
-        for tc in tool_calls or []:
-            fn = (tc or {}).get("function") or {}
-            name = fn.get("name") or ""
-            args = fn.get("arguments") or "{}"
-            if not name:
-                continue
-            lines.append(f"TOOL_CALL: {name}({args})")
-        return "\n".join(lines)
-
-    @staticmethod
     def _merge_stream_tool_calls(acc: dict, deltas: list | None) -> list:
         """合并 SSE 里分片的 delta.tool_calls，按 index 聚合。"""
         for d in deltas or []:
