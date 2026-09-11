@@ -192,7 +192,8 @@ class WorkBuddyClient:
         return remote or list(BUILTIN_MODELS)
 
     async def test_connection(self) -> Tuple[bool, str]:
-        """探活：打一次极小流式请求。"""
+        """探活：打一次最小流式请求。
+        按用户\"全部移除限制\"指令：不填 max_tokens，让上游/模型自行决定输出长度。"""
         if not self.account.has_session():
             return False, "no accessToken configured"
         try:
@@ -203,7 +204,6 @@ class WorkBuddyClient:
                     {
                         "model": bare_model(BUILTIN_MODELS[1]),
                         "messages": [{"role": "user", "content": "hi"}],
-                        "max_tokens": 1,
                     },
                     stream=True,
                 )

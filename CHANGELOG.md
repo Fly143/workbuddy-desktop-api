@@ -2,6 +2,16 @@
 
 本文件记录 workbuddy-desktop-api 的重要变更。协议层历史继承自 [xiaomi-mimo-desktop-api](https://github.com/Fly143/xiaomi-mimo-desktop-api)。
 
+## [v1.1.6] — 2026-09-11
+
+### 修复
+- **`test_connection` 探活请求仍塞了 `max_tokens: 1`** — 上次清理默认值时漏掉了这一处。
+  `WorkBuddyClient.test_connection`（管理后台"测试连接"按钮与启动期账号健康检查都会调）
+  发的最小请求被强制 1 token 上限，与"全部移除限制"指令不一致。
+  移除该字段并改注释，由上游/模型自行决定输出长度。
+  注：聊天路径（`/v1/chat/completions`、`/v1/messages`、`/v1/responses`）早已透传无默认，
+  这次仅清理探活一处。
+
 ## [v1.1.5] — 2026-09-11
 
 ### 修复
