@@ -271,6 +271,19 @@ class WorkBuddyClient:
     ) -> dict:
         parts: list = [{"type": "text", "text": query}]
         for m in multi_medias or []:
+            if not isinstance(m, dict):
+                continue
+            # 文本文件：内联为独立 text 块（上游无文件上传接口）
+            if (m.get("mediaType") or m.get("type")) == "file":
+                text = m.get("text") or ""
+                if text:
+                    name = m.get("name") or "file"
+                    parts.append({
+                        "type": "text",
+                        "text": f'<file name="{name}">\n{text}\n</file>',
+                    })
+                continue
+            # 图片：内联 image_url（base64 data URL 或远程 URL）
             url = m.get("url") or m.get("image_url")
             if url:
                 parts.append({"type": "image_url", "image_url": {"url": url}})

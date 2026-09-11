@@ -21,7 +21,7 @@ from app.batch import init_batch_storage as init_anthropic_batches
 app = FastAPI(
     title="WorkBuddy Desktop API",
     description="WorkBuddy Desktop session → OpenAI + Anthropic API (Chat / Responses / Anthropic Messages)",
-    version="1.1.4",
+    version="1.1.5",
 )
 
 app.add_middleware(
@@ -75,7 +75,7 @@ async def _auto_import_local_session():
 
 
 def _cleanup_old_sessions():
-    """清理过期会话。Desktop /api/route 无 conversation 删除接口，仅清本地记录。"""
+    """清理过期会话。上游没有 conversation 删除接口，仅清本地记录。"""
     import time
     async def _run():
         try:

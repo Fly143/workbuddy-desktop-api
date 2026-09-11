@@ -2,21 +2,49 @@
 
 本文件记录 workbuddy-desktop-api 的重要变更。协议层历史继承自 [xiaomi-mimo-desktop-api](https://github.com/Fly143/xiaomi-mimo-desktop-api)。
 
+## [v1.1.5] — 2026-09-11
+
+### 修复
+- **带附件的请求必然失败（严重）** — 附件处理从 xiaomi 仓 fork 后一直未适配：
+  - 上传请求打到 `https://aistudio.copilot.tencent.com/open-apis/resource/*`，
+    该主机在 WorkBuddy 上游并不存在（实测连接失败 / 404）
+  - 上传函数读取 `account.service_token`、`account.xiaomichatbot_ph` 等字段，
+    而 `WorkBuddyAccount` 只有 `wb_access_token` / `wb_uid` / `wb_refresh_token`，
+    访问即 `AttributeError`：**文本文件直接 500，图片被静默丢弃**
+  - 结果：任何带图片或文件的请求都无法正常工作
+
+  改为**内联**（不联网、无上传步骤）：
+  - 图片 → OpenAI `image_url` + base64 data URL
+    实测 `auto` / `hy4-preview` / `glm-5.3` / `kimi-k2.6` 均可正确识图
+    （`hy3` 本身不支持视觉，属模型能力差异，非本层问题）
+  - 文本文件 → 解码后作为独立 `text` 内容块内联（上限 20 万字符）
+  两个函数保留原名与 async 签名，既有调用点无需改动。
+
+- **Anthropic `document` 块被静默丢弃** — `anthropic.convert_messages` 只处理
+  `text` / `image` / `tool_result`，附件类文档块直接消失。现转换为 OpenAI `file` 块，
+  与图片一样内联进请求（`source.type="text"` 直接作为文本块）
+
+### 清理
+- 移除已无调用点的 `build_chunked_queries` — v1.1.4 移除分批 warmup 后成为死代码，
+  且其 docstring 恰好宣扬了「靠服务端 conversationId 累积上下文」这一导致 v1.1.4 bug 的错误假设
+- 修正 fork 残留的旧上游表述：`routes.py` / `anthropic_routes.py` / `main.py` 的注释与 docstring、
+  `config.py` 的工具协议说明、README 目录树
+
 ## [v1.1.4] — 2026-09-11
 
 ### 修复
-- **多轮对话历史完全丢失（严重）** — 上游 `/api/route` 无状态（没有 conversationId 概念），
-  但代码沿用了 MiMo2API 网页端的会话机制：
+- **多轮对话历史完全丢失（严重）** — 上游（`copilot.tencent.com/v2/chat/completions`）
+  无状态，没有 conversationId 概念，但代码沿用了 MiMo2API 网页端的会话机制：
   - `continuation=True` 只发最后一条 user 消息 → 上游看不到任何历史
-  - `build_chunked_queries` 的 warmup chunk 靠 `conversation_id` 灌历史，
-    而 `MimoClient.call_api` 接收该参数后从未使用（`_query_body` 只构造单条 user 消息），
+  - 分批 warmup chunk 靠 `conversation_id` 灌历史，
+    而 `WorkBuddyClient.call_api` 接收该参数后从未使用（`_query_body` 只构造单条 user 消息），
     warmup 请求发出即丢弃，还白耗一次完整生成
 
-  实测（mimo-x-flash-preview）：
-    第1轮「记住这个数字：7788」
+  实测（hy3）：
+    第1轮「记住这个数字：5566」
     第2轮 带全量历史问「我刚才让你记住的数字是多少」
-    修复前 → "This is the first message in our conversation"
-    修复后 → 7788
+    修复前 → 答非所问（看不到历史）
+    修复后 → 5566
 
   改为每次请求都携带完整历史；超长由 `build_query_from_messages` 内的
   QueryGuard 滑动窗口兜底，仍超阈值则按 `compression_mode` 压缩或裁剪。
@@ -78,7 +106,7 @@
 ## [v1.0.0] — 2026-09-11
 
 ### 新增
-- **Desktop 会话上游** — `passToken` → SSO → `serviceToken`，代理 `/api/route/chat/completions`
+- **Desktop 会话上游** — 读本机 `workbuddy-desktop.info` 的 `accessToken`，代理 `/v2/chat/completions`
 - **独占模型** — `hy4-preview` / `hy3`
 - **凭证自动导入** — 管理页一键读本机 Desktop cookie 库
 - **Fernet 加密** — `config.json` 敏感字段 + `.secret_key`

@@ -117,6 +117,22 @@ def convert_messages(
                             "type": "image_url",
                             "image_url": {"url": source.get("url", "")}
                         })
+                elif block.get("type") == "document":
+                    # Anthropic 文档块 → OpenAI file 块（由 extract_medias_from_messages 内联）
+                    source = block.get("source", {})
+                    stype = source.get("type")
+                    if stype == "base64":
+                        doc_type = source.get("media_type", "text/plain")
+                        new_blocks.append({
+                            "type": "file",
+                            "file": {
+                                "filename": block.get("title") or "document.txt",
+                                "file_data": f"data:{doc_type};base64,{source.get('data', '')}",
+                            },
+                        })
+                    elif stype == "text":
+                        # 纯文本来源：直接作为文本块
+                        text_parts.append(source.get("data", ""))
                 elif block.get("type") == "tool_result":
                     tool_results.append(block)
 

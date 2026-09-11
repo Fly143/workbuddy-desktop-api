@@ -21,7 +21,7 @@ from .models import (
 )
 from .config import config_manager, WorkBuddyAccount
 from .workbuddy_client import WorkBuddyClient, WorkBuddyApiError
-from .utils import parse_curl, build_query_from_messages, build_chunked_queries, extract_medias_from_messages, upload_media_to_workbuddy, upload_text_file_to_workbuddy
+from .utils import parse_curl, build_query_from_messages, extract_medias_from_messages, upload_media_to_workbuddy, upload_text_file_to_workbuddy
 from .context_compressor import compress_messages, truncate_messages, should_compress
 from .tool_call import extract_tool_call, normalize_tool_call, get_tool_names, clean_tool_text  # build_tool_prompt unused
 from .tool_sieve import StreamSieve
@@ -47,7 +47,7 @@ router = APIRouter()
 THINK_OPEN = "<think>"
 THINK_CLOSE = "</think>"
 
-MODELS_CONFIG_URL = ""  # Desktop 通路无 aistudio config
+MODELS_CONFIG_URL = ""  # WorkBuddy Desktop 通路无需单独的模型配置端点
 
 # ─── 模型上下文参数 ───────────────────────────────────────────
 
@@ -429,7 +429,7 @@ async def chat_completions(
             if media_obj:
                 multi_medias.append(media_obj)
 
-    # 上传文本文件到 WorkBuddy（同样走 multiMedias，mediaType="file"）
+    # 文本文件：解码后内联为文本块（上游无文件上传接口）
     if text_files:
         for tf in text_files:
             media_obj = await upload_text_file_to_workbuddy(
@@ -451,11 +451,10 @@ async def chat_completions(
     # 立即用当前消息更新指纹（对新会话：设置初值；对已有会话：更新续接后的指纹）
     _update_session_fingerprint(account.user_id, conv_id, request.messages)
 
-    # 续接会话时只发增量消息（WorkBuddy 服务端已有 conversationId 上下文）
-    # 新会话时构建全量 query，超长则根据模式裁剪或压缩
-    # 上游无状态（/api/route 无 conversation 概念）：每次请求都必须携带完整历史。
-    # 增量发送（continuation）与分批 warmup 都依赖服务端 conversationId 累积上下文，
-    # 在此上游上会被静默丢弃：历史丢失，且每个 warmup chunk 白耗一次完整生成。
+    # 上游无状态（copilot.tencent.com/v2/chat/completions 没有 conversation 概念）：
+    # 每次请求都必须携带完整历史。增量发送（continuation）与分批 warmup 都依赖
+    # 服务端 conversationId 累积上下文，在此上游上会被静默丢弃：历史丢失，
+    # 且每个 warmup chunk 白耗一次完整生成。
     # 超长由 build_query_from_messages 内的 QueryGuard 滑动窗口兜底，
     # 仍超阈值则按 compression_mode 压缩或裁剪。
     needs_compression = should_compress(request.messages)

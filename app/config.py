@@ -18,7 +18,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 DEFAULT_API_KEYS = "sk-workbuddy"
 DEFAULT_ADMIN_PASSWORD = "admin"
-DEFAULT_TOOLS_PASSTHROUGH = True  # 原生 tools/tool_calls，跳过 MiMoML 说明书
+DEFAULT_TOOLS_PASSTHROUGH = True  # 原生 tools/tool_calls，跳过文本工具协议（TOOL_CALL 说明书）
 DEFAULT_COMPRESSION_MODE = "compress"
 
 ENC_PREFIX = "enc:v1:"

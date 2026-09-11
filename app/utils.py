@@ -1,12 +1,10 @@
 """工具函数 — WorkBuddy Desktop-api
 
-凭证解析、媒体提取/上传、消息构建。
+凭证解析、媒体提取/内联、消息构建。
 """
 
 import re
-import hashlib
 import json as _json
-import httpx
 from typing import Optional, List, Tuple, Dict, Any
 from .config import WorkBuddyAccount
 
@@ -148,232 +146,91 @@ def _safe_nested_get(obj, *keys, default=None):
     return obj
 
 
-async def upload_text_file_to_workbuddy(
-    base64_data: str,
-    filename: str,
-    mime_type: str,
-    account: WorkBuddyAccount,
-    model: str = "hy4-preview"
-) -> Optional[Dict[str, Any]]:
-    """上传文本文件到Mimo服务器。
+# ── 附件处理（内联，无上传） ──────────────────────────────
+#
+# WorkBuddy 上游（copilot.tencent.com/v2/chat/completions）是 OpenAI 兼容接口，
+# 没有任何公开的文件上传接口（旧代码里的 /open-apis/resource/* 是上游不存在的地址，
+# 实测返回连接失败/404）。因此附件一律内联进用户消息：
+#   - 图片 → image_url + base64 data URL
+#     （实测 auto / hy4-preview / glm-5.3 / kimi-k2.6 均可正确识图）
+#   - 文本文件 → 独立的 text 内容块（由 workbuddy_client._query_body 展开）
+# 两个函数保留原名与 async 签名，既有调用点无需改动。
 
-    三步流程：genUploadInfo -> PUT 上传 -> resource/parse
-    返回 multiMedias 格式的 dict，可直接传给 WorkBuddy chat API。
-    """
-    if "," in base64_data:
-        base64_data = base64_data.split(",", 1)[1]
+MAX_INLINE_FILE_CHARS = 200_000
 
-    import base64 as b64
-    binary_data = b64.b64decode(base64_data)
 
-    md5 = hashlib.md5(binary_data).hexdigest()
-
-    cookie = f"serviceToken={account.service_token}; userId={account.user_id}; xiaomichatbot_ph={account.xiaomichatbot_ph}"
-    headers = {
-        "Cookie": cookie,
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-        "Referer": "https://aistudio.copilot.tencent.com/",
-        "Origin": "https://aistudio.copilot.tencent.com"
-    }
-
-    async with httpx.AsyncClient(timeout=60) as client:
-        try:
-            ph = account.xiaomichatbot_ph
-            info_res = await client.post(
-                f"https://aistudio.copilot.tencent.com/open-apis/resource/genUploadInfo?xiaomichatbot_ph={ph}",
-                json={"fileName": filename, "fileContentMd5": md5},
-                headers=headers
-            )
-            info_data = info_res.json()
-            if info_data.get("code") != 0 or not info_data.get("data"):
-                print(f"[uploadTextFile] genUploadInfo failed: {info_data}")
-                return None
-
-            upload_url = info_data["data"]["uploadUrl"]
-            resource_url = info_data["data"]["resourceUrl"]
-            object_name = info_data["data"]["objectName"]
-
-            put_headers = {"Content-Type": "application/octet-stream"}
-            put_res = await client.put(upload_url, content=binary_data, headers=put_headers)
-            if put_res.status_code != 200:
-                print(f"[uploadTextFile] PUT failed: {put_res.status_code}")
-                return None
-
-            from urllib.parse import quote
-
-            parse_params = {
-                "fileUrl": resource_url,
-                "objectName": object_name,
-                "model": model,
-                "xiaomichatbot_ph": ph,
-            }
-
-            parse_res = None
-            for attempt in range(5):
-                try:
-                    resp = await client.post(
-                        "https://aistudio.copilot.tencent.com/open-apis/resource/parse",
-                        params=parse_params,
-                        json={},
-                        headers={
-                            "Content-Type": "application/json",
-                            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-                            "Referer": "https://aistudio.copilot.tencent.com/",
-                            "Origin": "https://aistudio.copilot.tencent.com"
-                        },
-                        cookies=cookies
-                    )
-                    data = resp.json()
-                    if data.get("code") == 0 and data.get("data", {}).get("id"):
-                        parse_res = data
-                        import asyncio
-                        await asyncio.sleep(3)
-                        break
-                except Exception:
-                    pass
-                import asyncio
-                await asyncio.sleep(2)
-
-            if not parse_res:
-                print("[uploadTextFile] Parse failed after retries")
-                return None
-
-            resource_id = parse_res["data"]["id"]
-            return {
-                "mediaType": "file",
-                "fileUrl": resource_url,
-                "compressedVideoUrl": "",
-                "audioTrackUrl": "",
-                "name": filename,
-                "size": len(binary_data),
-                "status": "completed",
-                "objectName": object_name,
-                "tokenUsage": parse_res["data"].get("tokenUsage", 0),
-                "url": resource_id
-            }
-
-        except Exception as e:
-            print(f"[uploadTextFile] Error: {e}")
-            return None
+def _strip_data_url(data: str) -> str:
+    """去掉 `data:...;base64,` 前缀，返回裸 base64。"""
+    if not data:
+        return ""
+    s = data.strip()
+    if s.startswith("data:") and "," in s:
+        return s.split(",", 1)[1]
+    return s
 
 
 async def upload_media_to_workbuddy(
     base64_data: str,
     mime_type: str,
     account: WorkBuddyAccount,
-    model: str = "hy3"
+    model: str = "hy3",
 ) -> Optional[Dict[str, Any]]:
-    """上传媒体文件到Mimo服务器。
+    """把图片转成内联的 OpenAI `image_url` 内容块（不做任何网络请求）。
 
-    三步流程：genUploadInfo -> PUT 上传 -> resource/parse
+    返回的 dict 带 `url`（data URL），由 `_query_body` 组装进请求体。
     """
-    if "," in base64_data:
-        base64_data = base64_data.split(",", 1)[1]
-
-    import base64 as b64
-    binary_data = b64.b64decode(base64_data)
-
-    md5 = hashlib.md5(binary_data).hexdigest()
-    import uuid
-    ext = mime_type.split("/")[-1] if "/" in mime_type else "jpg"
-    if ext == "jpeg":
-        ext = "jpg"
-    file_name = f"{uuid.uuid4().hex}.{ext}"
-
-    ph = account.xiaomichatbot_ph
-    cookies = {"serviceToken": account.service_token, "userId": account.user_id, "xiaomichatbot_ph": ph}
-    headers = {
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-        "Referer": "https://aistudio.copilot.tencent.com/",
-        "Origin": "https://aistudio.copilot.tencent.com"
+    data = _strip_data_url(base64_data)
+    if not data:
+        return None
+    mime = mime_type or "image/png"
+    return {
+        "mediaType": "image",
+        "type": "image_url",
+        "url": f"data:{mime};base64,{data}",
     }
 
-    async with httpx.AsyncClient(timeout=30) as client:
+
+def _decode_text_file(base64_data: str) -> str:
+    """base64 → 文本，依次尝试 utf-8 / gb18030 / latin-1。"""
+    data = _strip_data_url(base64_data)
+    if not data:
+        return ""
+    import base64 as _b64
+
+    try:
+        raw = _b64.b64decode(data)
+    except Exception:
+        return ""
+    for enc in ("utf-8", "gb18030", "latin-1"):
         try:
-            info_res = await client.post(
-                "https://aistudio.copilot.tencent.com/open-apis/resource/genUploadInfo",
-                params={"xiaomichatbot_ph": ph},
-                json={"fileName": file_name},
-                headers=headers,
-                cookies=cookies
-            )
-            info_data = info_res.json()
-            if info_data.get("code") != 0 or not info_data.get("data"):
-                print(f"[uploadMedia] genUploadInfo failed: {info_data}")
-                return None
+            return raw.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", "replace")
 
-            upload_url = info_data["data"]["uploadUrl"]
-            resource_url = info_data["data"]["resourceUrl"]
-            object_name = info_data["data"]["objectName"]
 
-            put_headers = {"Content-Type": "application/octet-stream"}
-            put_res = await client.put(upload_url, content=binary_data, headers=put_headers)
-            if put_res.status_code != 200:
-                print(f"[uploadMedia] PUT failed: {put_res.status_code}")
-                return None
+async def upload_text_file_to_workbuddy(
+    base64_data: str,
+    filename: str,
+    mime_type: str,
+    account: WorkBuddyAccount,
+    model: str = "hy4-preview",
+) -> Optional[Dict[str, Any]]:
+    """把文本文件内联成文本内容块（不做任何网络请求）。
 
-            from urllib.parse import quote
-
-            parse_params = {
-                "fileUrl": resource_url,
-                "objectName": object_name,
-                "model": model,
-                "xiaomichatbot_ph": ph,
-            }
-
-            parse_res = None
-            for attempt in range(5):
-                try:
-                    resp = await client.post(
-                        "https://aistudio.copilot.tencent.com/open-apis/resource/parse",
-                        params=parse_params,
-                        json={},
-                        headers={
-                            "Content-Type": "application/json",
-                            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-                            "Referer": "https://aistudio.copilot.tencent.com/",
-                            "Origin": "https://aistudio.copilot.tencent.com"
-                        },
-                        cookies=cookies
-                    )
-                    data = resp.json()
-                    if data.get("code") == 0 and data.get("data", {}).get("id"):
-                        parse_res = data
-                        import asyncio
-                        await asyncio.sleep(3)
-                        break
-                except Exception:
-                    pass
-                import asyncio
-                await asyncio.sleep(2)
-
-            if not parse_res:
-                print("[uploadMedia] Parse failed after retries")
-                return None
-
-            resource_id = parse_res["data"]["id"]
-            is_video = mime_type.startswith("video/")
-            is_audio = mime_type.startswith("audio/")
-            media_type = "video" if is_video else ("audio" if is_audio else "image")
-
-            return {
-                "mediaType": media_type,
-                "fileUrl": resource_url,
-                "compressedVideoUrl": "",
-                "audioTrackUrl": resource_url if is_audio else "",
-                "name": file_name,
-                "size": len(binary_data),
-                "status": "completed",
-                "objectName": object_name,
-                "tokenUsage": parse_res["data"].get("tokenUsage", 106),
-                "url": resource_id
-            }
-
-        except Exception as e:
-            print(f"[uploadMedia] Error: {e}")
-            return None
+    内容作为独立 text 块附在用户消息后，由 `_query_body` 展开。
+    """
+    text = _decode_text_file(base64_data)
+    if not text.strip():
+        return None
+    if len(text) > MAX_INLINE_FILE_CHARS:
+        text = text[:MAX_INLINE_FILE_CHARS] + "\n...(文件过长已截断)"
+    return {
+        "mediaType": "file",
+        "type": "file",
+        "name": filename or "file.txt",
+        "text": text,
+    }
 
 
 def build_query_from_messages(
@@ -493,119 +350,3 @@ def build_query_from_messages(
         )
 
     return full_query
-
-
-def build_chunked_queries(
-    messages: list,
-    tools: list = None,
-    passthrough: bool = False,
-) -> list:
-    """当全量 query 超限时，按消息边界拆分成多个 chunk。
-
-    每个 chunk 包含 system + tools + 一部分历史消息，均在限制内。
-    调用方按顺序发送 chunk，WorkBuddy 通过 conversationId 累积上下文。
-    最后一个 chunk 包含最新的 user 消息（触发模型回复）。
-
-    Returns:
-        [query_str, ...] — 如果不需要拆分则返回 [full_query]（单元素列表）
-    """
-    MAX_QUERY_CHARS = int(__import__("os").getenv("WORKBUDDY_MAX_QUERY_CHARS", "102000"))
-
-    from .tool_call import build_tool_prompt
-
-    # 提取 system 和 tool prompt
-    system_text = ""
-    non_system_msgs = []
-    for msg in messages:
-        if msg.role == "system":
-            content = msg.content or ""
-            if isinstance(content, list):
-                text_parts = [item.get("text", "") for item in content if isinstance(item, dict) and item.get("type") == "text"]
-                content = " ".join(text_parts)
-            system_text = str(content).strip()
-        else:
-            non_system_msgs.append(msg)
-
-    if tools:
-        tool_prompt = build_tool_prompt(tools, passthrough=passthrough)
-        if tool_prompt:
-            system_text = (system_text + "\n\n" + tool_prompt).strip() if system_text else tool_prompt
-
-    system_prefix = f"system: {system_text}\n" if system_text else ""
-    sys_len = len(system_prefix)
-
-    # 先试整体构建（不做截断，让 build_chunked_queries 自己拆分）
-    full_query = build_query_from_messages(messages, tools=tools, passthrough=passthrough, no_truncate=True)
-    if len(full_query) <= MAX_QUERY_CHARS:
-        return [full_query]
-
-    # 需要拆分：把 non_system_msgs 转成 "role: content" 字符串列表
-    msg_strs = []
-    for msg in non_system_msgs:
-        content = msg.content or ""
-        if isinstance(content, list):
-            text_parts = [item.get("text", "") for item in content if isinstance(item, dict) and item.get("type") == "text"]
-            content = " ".join(text_parts)
-        if hasattr(msg, 'tool_calls') and msg.tool_calls:
-            content = _serialize_tool_calls(msg.tool_calls)
-        if msg.role == "tool":
-            tool_call_id = getattr(msg, 'tool_call_id', '') or ''
-            clean = __import__('re').sub(r'\[TOOL_RESULT\]\s*', '', content, flags=__import__('re').IGNORECASE).strip()
-            content = f"[tool_result id={tool_call_id[:8]}] {clean}"
-        msg_strs.append(f"{msg.role}: {content}")
-
-    # 按消息边界拆分 — system prompt 只在第一个 chunk 注入
-    available = MAX_QUERY_CHARS - 1  # 后续 chunk 不带 system
-    chunks = []
-    current_parts = []
-    current_len = 0
-    first_chunk = True
-
-    for ms in msg_strs:
-        part_len = len(ms) + 1  # +1 for \n
-        # 第一个 chunk 需要预留 system 空间
-        chunk_available = available - (sys_len + 1 if first_chunk else 0)
-        if part_len > chunk_available:
-            # 单条消息本身就超限 → 按字符拆成多段
-            if current_parts:
-                prefix = system_prefix if first_chunk else ""
-                chunks.append(prefix + "\n".join(current_parts))
-                first_chunk = False
-                current_parts = []
-                current_len = 0
-            # 拆分这条超长消息
-            role_prefix = ms.split(": ", 1)[0] + ": " if ": " in ms else ""
-            body = ms[len(role_prefix):]
-            suffix = "\n\n（内容未完，请不要回复，等待后续内容）"
-            chunk_budget = chunk_available - len(role_prefix) - len(suffix) - 1
-            pos = 0
-            while pos < len(body):
-                segment = body[pos:pos + chunk_budget]
-                if pos + chunk_budget < len(body):
-                    # 非最后一段，加提示让模型不要回复
-                    prefix = system_prefix if first_chunk else ""
-                    chunks.append(prefix + role_prefix + segment + suffix)
-                    first_chunk = False
-                else:
-                    # 最后一段，正常发送
-                    current_parts.append(role_prefix + segment)
-                    current_len = len(role_prefix) + len(segment) + 1
-                pos += chunk_budget
-        elif current_parts and current_len + part_len > chunk_available:
-            # 当前 chunk 满了，保存并开始新 chunk
-            prefix = system_prefix if first_chunk else ""
-            chunks.append(prefix + "\n".join(current_parts))
-            first_chunk = False
-            current_parts = [ms]
-            current_len = part_len
-        else:
-            current_parts.append(ms)
-            current_len += part_len
-
-    if current_parts:
-        prefix = system_prefix if first_chunk else ""
-        chunks.append(prefix + "\n".join(current_parts))
-
-    final = [c for c in chunks if c.strip()]
-    print(f"[QueryGuard] Query split into {len(final)} chunks: {[len(c) for c in final]} chars")
-    return final

@@ -42,7 +42,7 @@ from .batch import init_batch_storage as _anthropic_init_batch_storage
 from .workbuddy_client import WorkBuddyClient, WorkBuddyApiError
 from .config import config_manager
 from .models import OpenAIMessage
-from .utils import build_query_from_messages, build_chunked_queries, extract_medias_from_messages, upload_media_to_workbuddy, upload_text_file_to_workbuddy
+from .utils import build_query_from_messages, extract_medias_from_messages, upload_media_to_workbuddy, upload_text_file_to_workbuddy
 from .tool_call import extract_tool_call, get_tool_names, clean_tool_text
 from .context_compressor import compress_messages, truncate_messages, should_compress
 from .session_store import (
@@ -502,7 +502,7 @@ async def anthropic_messages(
                 except Exception as e:
                     print(f"[Anthropic] failed to download image URL {url}: {e}")
 
-    # 上传到 WorkBuddy CDN
+    # 图片内联为 image_url data URL（上游无文件上传接口）
     multi_medias = []
     if base64_medias:
         for media in base64_medias:
@@ -525,8 +525,6 @@ async def anthropic_messages(
         account.user_id, msgs_as_objects, model,
     )
 
-    # 续接会话时只发增量消息（WorkBuddy 服务端已有 conversationId 上下文）
-    # 新会话时构建全量 query，超长则根据模式裁剪或压缩
     client = WorkBuddyClient(account)
     # 上游无状态：始终携带完整历史，理由见 routes.py 同名修复注释
     if should_compress(msgs_as_objects):

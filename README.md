@@ -372,7 +372,7 @@ workbuddy-desktop-api/
 └── app/
     ├── workbuddy_session.py   # passToken → SSO → serviceToken
     ├── auto_import.py       # 读本机 Desktop cookie 库
-    ├── workbuddy_client.py       # /api/route 客户端 + 旧接口适配
+    ├── workbuddy_client.py       # copilot.tencent.com 客户端 + 旧接口适配
     ├── routes.py            # OpenAI / Responses / 管理
     ├── anthropic_routes.py  # Anthropic Messages
     ├── config.py            # 多账号 + Fernet 加密
