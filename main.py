@@ -1,6 +1,6 @@
-"""WorkBuddy Desktop API — 主入口
+﻿"""WorkBuddy Desktop API 鈥?涓诲叆鍙?
 
-将WorkBuddy Desktop 账号会话转换为 OpenAI + Anthropic 兼容 API。
+灏哤orkBuddy Desktop 璐﹀彿浼氳瘽杞崲涓?OpenAI + Anthropic 鍏煎 API銆?
 """
 
 import os
@@ -18,8 +18,8 @@ from app.batch import init_batch_storage as init_anthropic_batches
 
 app = FastAPI(
     title="WorkBuddy Desktop API",
-    description="WorkBuddy Desktop session → OpenAI + Anthropic API (Chat / Responses / Anthropic Messages)",
-    version="1.2.1",
+    description="WorkBuddy Desktop session 鈫?OpenAI + Anthropic API (Chat / Responses / Anthropic Messages)",
+    version="1.2.2",
 )
 
 app.add_middleware(
@@ -37,15 +37,15 @@ async def startup_discover_models():
     await _auto_import_local_session()
     try:
         await _do_discover()
-        print("模型预探测完成")
+        print("妯″瀷棰勬帰娴嬪畬鎴?)
     except Exception as e:
-        print(f"模型预探测失败（不影响服务）: {e}")
+        print(f"妯″瀷棰勬帰娴嬪け璐ワ紙涓嶅奖鍝嶆湇鍔★級: {e}")
 
 
 async def _auto_import_local_session():
-    """首次启动且未配置账号时，自动导入本机 WorkBuddy Desktop 会话。
+    """棣栨鍚姩涓旀湭閰嶇疆璐﹀彿鏃讹紝鑷姩瀵煎叆鏈満 WorkBuddy Desktop 浼氳瘽銆?
 
-    凭证文件：%LOCALAPPDATA%/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info
+    鍑瘉鏂囦欢锛?LOCALAPPDATA%/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info
     """
     if config_manager.config.workbuddy_accounts:
         return
@@ -55,7 +55,7 @@ async def _auto_import_local_session():
 
         payload = await auto_import_desktop()
         if not payload.get("found"):
-            print(f"[启动] 未在本机发现 WorkBuddy Desktop 会话：{payload.get('error', '')}")
+            print(f"[鍚姩] 鏈湪鏈満鍙戠幇 WorkBuddy Desktop 浼氳瘽锛歿payload.get('error', '')}")
             return
         fields = apply_import_payload(payload)
         result = await _validate_and_save(
@@ -64,9 +64,9 @@ async def _auto_import_local_session():
             fields["wb_refresh_token"],
             fields.get("uid") or "",
         )
-        print(f"[启动] 已自动导入本机 WorkBuddy Desktop 会话：{result}")
+        print(f"[鍚姩] 宸茶嚜鍔ㄥ鍏ユ湰鏈?WorkBuddy Desktop 浼氳瘽锛歿result}")
     except Exception as e:
-        print(f"[启动] 自动导入失败（可在管理页手动导入）: {e}")
+        print(f"[鍚姩] 鑷姩瀵煎叆澶辫触锛堝彲鍦ㄧ鐞嗛〉鎵嬪姩瀵煎叆锛? {e}")
 
 
 
@@ -86,14 +86,14 @@ def main():
 
     print(f"""
 WorkBuddy Desktop API
-  地址: http://{host}:{port}
-  管理: http://{host}:{port}
+  鍦板潃: http://{host}:{port}
+  绠＄悊: http://{host}:{port}
   API:  http://{host}:{port}/v1/chat/completions
-  文档: http://{host}:{port}/docs
+  鏂囨。: http://{host}:{port}/docs
 
-  API Keys: {len(config_manager.config.api_keys.split(','))} 个
-  Desktop 账号: {len(config_manager.config.workbuddy_accounts)} 个
-  模型: hy4-preview / hy3
+  API Keys: {len(config_manager.config.api_keys.split(','))} 涓?
+  Desktop 璐﹀彿: {len(config_manager.config.workbuddy_accounts)} 涓?
+  妯″瀷: hy4-preview / hy3
 """)
 
     uvicorn.run(app, host=host, port=port, log_level="info")
