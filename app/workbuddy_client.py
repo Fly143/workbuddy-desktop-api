@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import AsyncIterator, Optional, Tuple
 
 import httpx
@@ -26,7 +27,7 @@ from .workbuddy_session import (
     list_remote_models,
 )
 
-TIMEOUT = 180.0
+TIMEOUT = float(os.getenv("MIMO_CLIENT_TIMEOUT", "600"))
 # 不要替用户塞默认 max_tokens。
 # 实测（hy3）：max_tokens 是「reasoning + 正文」的合计预算——
 #   - 不传：上游不限，模型充分思考后正常输出正文（写 3000 字长文正常推进）
