@@ -2,6 +2,11 @@
 
 本文件记录 workbuddy-desktop-api 的重要变更。协议层历史继承自 [xiaomi-mimo-desktop-api](https://github.com/Fly143/xiaomi-mimo-desktop-api)。
 
+## [v1.2.3] — 2026-09-12
+
+### 变更
+- **主对话 HTTP 超时默认不限** — `MIMO_CLIENT_TIMEOUT` 默认 `0`（`timeout=None`）；思考+输出整条流纯透传，不再被 600s 掐断。需要保护时显式设秒数
+
 ## [v1.2.2] — 2026-09-12
 
 ### 变更

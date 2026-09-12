@@ -27,7 +27,10 @@ from .workbuddy_session import (
     list_remote_models,
 )
 
-TIMEOUT = float(os.getenv("MIMO_CLIENT_TIMEOUT", "600"))
+# 主对话 HTTP 超时（秒）。默认 0 = 不限：思考+输出整条流纯透传，不设代理侧时限。
+# 需要保护时显式设 MIMO_CLIENT_TIMEOUT=600 等。
+_t = float(os.getenv("MIMO_CLIENT_TIMEOUT", "0") or "0")
+TIMEOUT = None if _t <= 0 else _t
 # 不要替用户塞默认 max_tokens。
 # 实测（hy3）：max_tokens 是「reasoning + 正文」的合计预算——
 #   - 不传：上游不限，模型充分思考后正常输出正文（写 3000 字长文正常推进）
