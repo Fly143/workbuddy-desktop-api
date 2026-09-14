@@ -6,6 +6,12 @@
 
 ### 变更
 - **主对话 HTTP 超时默认不限** — `MIMO_CLIENT_TIMEOUT` 默认 `0`（`timeout=None`）；思考+输出整条流纯透传，不再被 600s 掐断。需要保护时显式设秒数
+- **README 补全 Anthropic 模型别名表** — 与 `_resolve_anthropic_model` 一致（4.7/日期后缀/`-latest`/启发式）
+
+### 修复（RikkaHub / Desktop 选项卡片）
+- **Desktop `question` 工具选项可见** — 选项物化到 `content`，避免普通客户端只看到很短正文
+- **映射 `question` → RikkaHub `ask_user`** — 仅当客户端只带 `ask_user` 时改写；声明了 `question` 的客户端原样透传，互不影响
+- **客户端仅带 `ask_user` 时向上游注入 `question`** — Desktop 只有 tool list 含 `question` 才会触发交互提问
 
 ## [v1.2.2] — 2026-09-12
 
