@@ -298,9 +298,11 @@ class WorkBuddyClient:
             "messages": [{"role": "user", "content": content}],
             "stream": stream,
         }
-        # 思考强度纯透传：客户端传了才写入，不猜 medium/high
+        # 思考强度：显式透传 reasoning_effort；仅 thinking=True 且无档位时默认 high
         if reasoning_effort:
             body["reasoning_effort"] = reasoning_effort
+        elif thinking:
+            body["reasoning_effort"] = "high"
         norm_tools = self._normalize_tools(tools)
         if norm_tools:
             body["tools"] = norm_tools
