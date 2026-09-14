@@ -2,7 +2,16 @@
 
 本文件记录 workbuddy-desktop-api 的重要变更。协议层历史继承自 [xiaomi-mimo-desktop-api](https://github.com/Fly143/xiaomi-mimo-desktop-api)。
 
+## [v1.2.3.1] — 2026-09-14
+
+### 修复
+- **v1.2.3 用错提问工具名** — WorkBuddy 上游是 **\AskUserQuestion\**（别名 \sk_user_question\ / \sk_followup_question\），不是 MiMo Desktop 的 \question\。v1.2.3 注入/改写了错误工具，交互提问无法触发
+- 按 app.asar schema 修正：\questions\ 1–4；\options\ 2–4；\header\≤12；\multiSelect- 客户端只带 RikkaHub \sk_user\ 时注入 \AskUserQuestion\，响应改写回 \sk_user\；已声明该工具则透传
+
 ## [v1.2.3] — 2026-09-12
+
+> ⚠️ 本 tag 选项卡片工具名有误，请改用 **\1.2.3.1\**。
+
 
 ### 变更
 - **主对话 HTTP 超时默认不限** — `MIMO_CLIENT_TIMEOUT` 默认 `0`（`timeout=None`）；思考+输出整条流纯透传，不再被 600s 掐断。需要保护时显式设秒数
