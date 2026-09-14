@@ -468,6 +468,66 @@ def _rewrite_question_to_ask_user(tool_calls: list) -> list:
     return out
 
 
+def _desktop_question_tool() -> dict:
+    """Desktop 内置 `question` 工具定义（模型侧只在 tool list 里有它才会调用）。"""
+    return {
+        "type": "function",
+        "function": {
+            "name": "question",
+            "description": (
+                "Ask the user a clarifying question with selectable options. "
+                "Use this when you need the user to choose before continuing."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "questions": {
+                        "type": "array",
+                        "description": "Questions to ask the user",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "question": {"type": "string"},
+                                "options": {
+                                    "type": "array",
+                                    "description": "Selectable options",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "label": {"type": "string"},
+                                            "description": {"type": "string"},
+                                        },
+                                        "required": ["label"],
+                                    },
+                                },
+                                "multiple": {"type": "boolean"},
+                                "custom": {"type": "boolean"},
+                            },
+                            "required": ["question"],
+                        },
+                    }
+                },
+                "required": ["questions"],
+            },
+        },
+    }
+
+
+def _ensure_desktop_question_tool(tools_dict: list | None) -> list | None:
+    """客户端带 RikkaHub `ask_user` 时，向 Desktop 补注入 `question`。"""
+    if not tools_dict:
+        return tools_dict
+    names = set()
+    for t in tools_dict:
+        fn = (t or {}).get("function") or {}
+        n = (fn.get("name") or t.get("name") or "").lower()
+        if n:
+            names.add(n)
+    if "question" in names or "ask_user" not in names:
+        return tools_dict
+    return list(tools_dict) + [_desktop_question_tool()]
+
+
 def _build_response(
     msg_id: str, model: str,
     content: str = None, tool_calls: list = None,
@@ -583,6 +643,7 @@ async def chat_completions(
 
     # 转换 tools 为字典列表
     tools_dict = [t.dict() if hasattr(t, 'dict') else t for t in request.tools] if request.tools else None
+    tools_dict = _ensure_desktop_question_tool(tools_dict)
 
     # 提取媒体和文本文件
     query_text, base64_medias, text_files, processed_msgs = extract_medias_from_messages(request.messages)
