@@ -1,6 +1,12 @@
-﻿# 更新日志（Changelog）
+# 更新日志（Changelog）
 
 本文件记录 workbuddy-desktop-api 的重要变更。协议层历史继承自 [xiaomi-mimo-desktop-api](https://github.com/Fly143/xiaomi-mimo-desktop-api)。
+
+## [v1.2.3.2] — 2026-09-14
+
+### 变更
+- **`reasoning_effort` 纯透传** — 去掉写死的 `medium`；客户端传 `low`/`medium`/`high` 原样下传
+- 仅 `thinking=true` 且无档位时默认 `high`（与 xiaomi / MiMo2API 策略对齐）
 
 ## [v1.2.3.1] — 2026-09-14
 
