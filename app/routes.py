@@ -376,6 +376,17 @@ def _merge_question_visibility(content: str | None, tool_calls: list | None) -> 
     return base + "\n\n" + qtext
 
 
+def _question_only_tool_calls(tool_calls: list | None) -> bool:
+    """是否仅为 Desktop question 工具（无其它业务工具）。"""
+    names = set()
+    for tc in tool_calls or []:
+        fn = (tc or {}).get("function") or {}
+        name = (fn.get("name") or "").strip().lower()
+        if name:
+            names.add(name)
+    return bool(names) and names == {"question"}
+
+
 def _build_response(
     msg_id: str, model: str,
     content: str = None, tool_calls: list = None,
@@ -607,6 +618,13 @@ async def chat_completions(
 
         if tool_calls:
             visible = _merge_question_visibility(content, tool_calls)
+            if _question_only_tool_calls(tool_calls):
+                return _build_response(
+                    msg_id, request.model,
+                    content=visible, tool_calls=None,
+                    reasoning=think_content,
+                    finish_reason="stop", usage=usage
+                )
             return _build_response(
                 msg_id, request.model,
                 content=visible, tool_calls=tool_calls,
@@ -759,6 +777,14 @@ async def _stream_response(
 
             if collected_tool_calls:
                 visible = _merge_question_visibility("".join(content_buffer_chunks), collected_tool_calls)
+                if _question_only_tool_calls(collected_tool_calls):
+                    if visible:
+                        yield _build_chunk(msg_id, model, created=created_t, content=visible)
+                    yield _build_chunk(msg_id, model, created=created_t, finish_reason="stop")
+                    yield "data: [DONE]\n\n"
+                    if last_usage:
+                        _add_usage(model, last_usage.get("promptTokens", 0), last_usage.get("completionTokens", 0))
+                    return
                 if visible:
                     yield _build_chunk(msg_id, model, created=created_t, content=visible)
                 # 原生 tool_calls 直接输出（OpenAI 标准格式，附 index）
