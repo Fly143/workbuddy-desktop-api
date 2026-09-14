@@ -1724,7 +1724,9 @@ async def _do_response_chat(body: dict, account) -> tuple:
             _, openai_messages = await compress_messages(openai_messages, effective_model, client)
         else:
             openai_messages = truncate_messages(openai_messages)
-    query = build_query_from_messages(openai_messages, tools=tools_dict)
+    query = build_query_from_messages(
+        openai_messages, tools=tools_dict, passthrough=config_manager.config.tools_passthrough
+    )
 
     thinking = False
     try:
@@ -1869,7 +1871,9 @@ async def _stream_response_events(body: dict, account):
             _, openai_messages = await compress_messages(openai_messages, effective_model, client)
         else:
             openai_messages = truncate_messages(openai_messages)
-    query = build_query_from_messages(openai_messages, tools=tools_dict)
+    query = build_query_from_messages(
+        openai_messages, tools=tools_dict, passthrough=config_manager.config.tools_passthrough
+    )
     thinking = False
 
     response_id = body.get("_response_id") or _gen_response_id()

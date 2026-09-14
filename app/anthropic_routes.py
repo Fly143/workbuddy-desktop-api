@@ -537,8 +537,9 @@ async def anthropic_messages(
             _, msgs_as_objects = await compress_messages(msgs_as_objects, model, client)
         else:
             msgs_as_objects = truncate_messages(msgs_as_objects)
+    # WorkBuddy 原生 tool_calls：query 不塞文本工具说明书（与 chat tools_passthrough 一致）
     query = build_query_from_messages(
-        msgs_as_objects, tools=tools_dict
+        msgs_as_objects, tools=tools_dict, passthrough=config_manager.config.tools_passthrough
     )
 
     # ── 工具名（用于后续提取） ──
@@ -689,7 +690,9 @@ async def anthropic_create_batch_ep(request: Request):
         ob = _anthropic_convert_request(req.get("body", {}))
         msgs = ob.get("messages", [])
         msgs_objs = [OpenAIMessage(**m) if isinstance(m, dict) else m for m in msgs]
-        query = build_query_from_messages(msgs_objs)
+        query = build_query_from_messages(
+            msgs_objs, passthrough=config_manager.config.tools_passthrough
+        )
 
         account = config_manager.get_next_account()
         if not account:
