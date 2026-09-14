@@ -1,4 +1,4 @@
-# 更新日志（Changelog）
+﻿# 更新日志（Changelog）
 
 本文件记录 workbuddy-desktop-api 的重要变更。协议层历史继承自 [xiaomi-mimo-desktop-api](https://github.com/Fly143/xiaomi-mimo-desktop-api)。
 
@@ -11,7 +11,7 @@
 ### 修复（RikkaHub / Desktop 选项卡片）
 - **Desktop `question` 工具选项可见** — 选项物化到 `content`，避免普通客户端只看到很短正文
 - **映射 `question` → RikkaHub `ask_user`** — 仅当客户端只带 `ask_user` 时改写；声明了 `question` 的客户端原样透传，互不影响
-- **客户端仅带 `ask_user` 时向上游注入 `question`** — Desktop 只有 tool list 含 `question` 才会触发交互提问
+- **客户端仅带 `ask_user` 时向上游注入 `AskUserQuestion`** — WorkBuddy 工具名是 `AskUserQuestion`（非 MiMo `question`），schema 含 header/multiSelect
 
 ## [v1.2.2] — 2026-09-12
 
@@ -338,3 +338,4 @@
 | `no-tools` | 纯对话代理 + TTS（语音合成、音色设计、语音克隆、导演模式） |
 
 日常使用推荐 no-tools 分支（上下文更干净，输出质量更高）。如需 TTS 功能直接使用 no-tools。
+
