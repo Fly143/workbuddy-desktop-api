@@ -315,12 +315,46 @@ curl http://127.0.0.1:8080/v1/messages \
   }'
 ```
 
-Claude 模型名自动映射：
+### Anthropic 模型名映射
 
-| Anthropic 名 | Desktop 模型 |
-|--------------|--------------|
-| `claude-opus-4-6` / `claude-opus-4-1` / `claude-3-opus` 等 opus 级 | `hy4-preview` |
-| `claude-sonnet-*` / `claude-haiku-*` 等 | `hy3` |
+Claude Code CLI / RikkaHub 等工具期望 Anthropic 风格模型名。本代理在 `/v1/messages` 内部自动映射到 WorkBuddy Desktop 模型：
+
+| Claude 模型名 | → WorkBuddy 模型 |
+|---|---|
+| `claude-opus-4-7` | `hy4-preview` |
+| `claude-sonnet-4-7` | `hy3` |
+| `claude-haiku-4-7` | `hy3` |
+| `claude-opus-4-6` | `hy4-preview` |
+| `claude-sonnet-4-6` | `hy3` |
+| `claude-haiku-4-6` | `hy3` |
+| `claude-opus-4-5` | `hy4-preview` |
+| `claude-sonnet-4-5` | `hy3` |
+| `claude-haiku-4-5` | `hy3` |
+| `claude-opus-4-1` | `hy4-preview` |
+| `claude-opus-4-0` | `hy4-preview` |
+| `claude-sonnet-4-0` | `hy3` |
+| `claude-haiku-4-0` | `hy3` |
+| `claude-3-7-sonnet` | `hy3` |
+| `claude-3-5-sonnet` | `hy3` |
+| `claude-3-opus` | `hy4-preview` |
+| `claude-3-sonnet` | `hy3` |
+| `claude-3-haiku` | `hy3` |
+| `claude-opus-4-7-search` / `claude-opus-4-6-search` | `hy4-preview` |
+| `claude-sonnet-4-7-search` / `claude-sonnet-4-6-search` | `hy3` |
+| `claude-sonnet-4-7-nothinking` / `claude-sonnet-4-6-nothinking` | `hy3` |
+| `claude-haiku-4-5-nothinking` | `hy3` |
+| `claude-sonnet-4-7-thinking` | `hy3` |
+| `claude-opus-4-7-thinking` | `hy4-preview` |
+
+匹配规则（与 `_resolve_anthropic_model` 一致）：
+
+1. 原生模型名（如 `hy4-preview` / `hy3` / `auto` 等）原样透传  
+2. 表内精确匹配  
+3. 去掉日期后缀 `-YYYYMMDD` / `-YYYY-MM-DD` 再匹配  
+4. 去掉 `-latest` / `@latest` 再匹配  
+5. 未知 `claude-*`：含 `opus` → `hy4-preview`，否则 → `hy3`
+
+`/v1/models` 仍返回 WorkBuddy 云端动态清单（含 `hy4-preview`、`hy3` 等），不影响其他客户端。
 
 支持端点：`/v1/messages`、`/v1/messages/count_tokens`、`/v1/messages/batches*` 等。
 

@@ -67,7 +67,15 @@ curl http://127.0.0.1:8080/v1/chat/completions \
   -d '{"model":"hy4-preview","messages":[{"role":"user","content":"hi"}]}'
 ```
 
-Claude aliases: opus-class → `hy4-preview`, sonnet/haiku → `hy3`.
+Claude aliases on `/v1/messages` (see `ANTHROPIC_MODEL_ALIASES`):
+
+| Claude name | → WorkBuddy model |
+|---|---|
+| `claude-opus-4-7` / `4-6` / `4-5` / `4-1` / `4-0` / `claude-3-opus` | `hy4-preview` |
+| `claude-sonnet-*` / `claude-haiku-*` / `claude-3-*-sonnet` / `claude-3-haiku` | `hy3` |
+| `*-search` / `*-thinking` / `*-nothinking` variants | same tier as base name |
+
+Also strips `-YYYYMMDD` / `-YYYY-MM-DD` / `-latest` before lookup; unknown `claude-*`: `opus` → `hy4-preview`, else `hy3`. Native model ids (e.g. `hy4-preview`, `hy3`, `auto`) pass through unchanged.
 
 ## Environment
 
