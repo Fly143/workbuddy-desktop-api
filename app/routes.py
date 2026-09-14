@@ -698,7 +698,9 @@ async def chat_completions(
     # 构建查询
     passthrough_mode = request.passthrough or config_manager.config.tools_passthrough
 
-    thinking = bool(request.reasoning_effort)
+    # 思考强度纯透传：客户端传了才开启并下传
+    reasoning_effort = (request.reasoning_effort or "").strip().lower() or None
+    thinking = bool(reasoning_effort)
     client = WorkBuddyClient(account)
 
     # 上游无状态（copilot.tencent.com/v2/chat/completions 没有 conversation 概念）：
@@ -736,6 +738,7 @@ async def chat_completions(
                              raw_tools=tools_dict if needs_compression else None,
                              raw_passthrough=passthrough_mode if needs_compression else None,
                              effective_model=effective_model,
+                             reasoning_effort=reasoning_effort,
                              prefer_ask_user=prefer_ask_user),
             media_type="text/event-stream",
             headers={
@@ -755,7 +758,7 @@ async def chat_completions(
     try:
         content, think_content, usage, citations, native_tool_calls = await client.call_api(
             query, thinking, effective_model, multi_medias,
-            tools=tools_dict)
+            tools=tools_dict, reasoning_effort=reasoning_effort)
 
         # 保存用量
         if usage:
@@ -824,6 +827,7 @@ async def _stream_response(
     raw_passthrough: bool = False,
     effective_model: str = None,
     prefer_ask_user: bool = False,
+    reasoning_effort: str | None = None,
 ):
     """流式响应生成器。
 
@@ -875,7 +879,10 @@ async def _stream_response(
             last_usage = None
             upstream_finish_reason = ""
 
-            async for sse_data in client.stream_api(query, thinking, model, multi_medias, tools=tools):
+            async for sse_data in client.stream_api(
+                query, thinking, model, multi_medias, tools=tools,
+                reasoning_effort=reasoning_effort,
+            ):
                 ev_type = sse_data.get("type")
                 if ev_type == "tool_calls":
                     # 上游原生 tool_calls（已按 index 合并）→ 直接累加
@@ -977,7 +984,10 @@ async def _stream_response(
             last_usage = None
 
             pending_text = ""
-            async for sse_data in client.stream_api(query, thinking, model, multi_medias, tools=tools):
+            async for sse_data in client.stream_api(
+                query, thinking, model, multi_medias, tools=tools,
+                reasoning_effort=reasoning_effort,
+            ):
                 if sse_data.get("type") == "usage":
                     last_usage = sse_data
                     continue
