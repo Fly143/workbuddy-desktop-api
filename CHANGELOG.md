@@ -2,6 +2,12 @@
 
 本文件记录 workbuddy-desktop-api 的重要变更。协议层历史继承自 [xiaomi-mimo-desktop-api](https://github.com/Fly143/xiaomi-mimo-desktop-api)。
 
+## [v1.2.3.3] — 2026-09-14
+
+### 修复
+- **Anthropic / Responses / batch 路径补传 `tools_passthrough`** — 之前漏传导致默认 False，向 query 注入工具格式说明书；RikkaHub 走 `/v1/messages` 时会看到
+- Chat 路径原本已传；本轮补齐所有 `build_query_from_messages` 调用点
+
 ## [v1.2.3.2] — 2026-09-14
 
 ### 变更
