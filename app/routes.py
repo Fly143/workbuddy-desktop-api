@@ -315,6 +315,67 @@ def _split_think(text: str) -> Tuple[str, str]:
 
 # ─── 响应构建 ─────────────────────────────────────────────────
 
+def _question_options_text(tool_calls: list) -> str:
+    """把 Desktop `question` 工具调用转成普通客户端可见的选项文本。
+
+    Desktop 原生用 `question` tool_calls 渲染可点选项卡；OpenAI 兼容客户端
+    通常不识别该工具，只看到 content 很短或为空。这里把 options 物化到 content，
+    同时保留 tool_calls，兼容会处理该工具的客户端。
+    """
+    blocks = []
+    for tc in tool_calls or []:
+        if not isinstance(tc, dict):
+            continue
+        fn = tc.get("function") or {}
+        if (fn.get("name") or "").lower() != "question":
+            continue
+        raw = fn.get("arguments") or ""
+        try:
+            args = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        except (json.JSONDecodeError, TypeError):
+            continue
+        questions = args.get("questions") or []
+        if isinstance(questions, dict):
+            questions = [questions]
+        for i, q in enumerate(questions, 1):
+            if not isinstance(q, dict):
+                continue
+            title = (q.get("question") or "").strip() or f"选项 {i}"
+            opts = q.get("options") or []
+            lines = [f"### {title}"]
+            if q.get("multiple") is True:
+                lines.append("（可多选）")
+            for j, opt in enumerate(opts, 1):
+                if isinstance(opt, str):
+                    label, desc = opt, ""
+                elif isinstance(opt, dict):
+                    label = (opt.get("label") or "").strip()
+                    desc = (opt.get("description") or "").strip()
+                else:
+                    continue
+                if not label:
+                    continue
+                line = f"{j}. {label}"
+                if desc:
+                    line += f" — {desc}"
+                lines.append(line)
+            blocks.append("\n".join(lines))
+    return "\n\n".join(blocks).strip()
+
+
+def _merge_question_visibility(content: str | None, tool_calls: list | None) -> str | None:
+    """保证 question 工具产生的选项在 content 中可见。"""
+    qtext = _question_options_text(tool_calls)
+    if not qtext:
+        return content
+    base = (content or "").strip()
+    if not base:
+        return qtext
+    if qtext in base:
+        return content
+    return base + "\n\n" + qtext
+
+
 def _build_response(
     msg_id: str, model: str,
     content: str = None, tool_calls: list = None,
@@ -545,9 +606,10 @@ async def chat_completions(
         content = _strip_tool_name_prefix(content, tool_names)
 
         if tool_calls:
+            visible = _merge_question_visibility(content, tool_calls)
             return _build_response(
                 msg_id, request.model,
-                content=None, tool_calls=tool_calls,
+                content=visible, tool_calls=tool_calls,
                 reasoning=think_content,
                 finish_reason="tool_calls", usage=usage
             )
@@ -696,6 +758,9 @@ async def _stream_response(
                 yield _build_chunk(msg_id, model, created=created_t, reasoning=buffer)
 
             if collected_tool_calls:
+                visible = _merge_question_visibility("".join(content_buffer_chunks), collected_tool_calls)
+                if visible:
+                    yield _build_chunk(msg_id, model, created=created_t, content=visible)
                 # 原生 tool_calls 直接输出（OpenAI 标准格式，附 index）
                 streaming_tc = []
                 for i, tc in enumerate(collected_tool_calls):
