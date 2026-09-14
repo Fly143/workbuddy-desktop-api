@@ -316,18 +316,14 @@ def _split_think(text: str) -> Tuple[str, str]:
 # ─── 响应构建 ─────────────────────────────────────────────────
 
 def _question_options_text(tool_calls: list) -> str:
-    """把 Desktop `question` 工具调用转成普通客户端可见的选项文本。
-
-    Desktop 原生用 `question` tool_calls 渲染可点选项卡；OpenAI 兼容客户端
-    通常不识别该工具，只看到 content 很短或为空。这里把 options 物化到 content，
-    同时保留 tool_calls，兼容会处理该工具的客户端。
-    """
+    """把 Desktop `question` / RikkaHub `ask_user` 工具调用转成可见选项文本。"""
     blocks = []
     for tc in tool_calls or []:
         if not isinstance(tc, dict):
             continue
         fn = tc.get("function") or {}
-        if (fn.get("name") or "").lower() != "question":
+        name = (fn.get("name") or "").lower()
+        if name not in ("question", "ask_user"):
             continue
         raw = fn.get("arguments") or ""
         try:
@@ -343,7 +339,8 @@ def _question_options_text(tool_calls: list) -> str:
             title = (q.get("question") or "").strip() or f"选项 {i}"
             opts = q.get("options") or []
             lines = [f"### {title}"]
-            if q.get("multiple") is True:
+            multi = q.get("multiple") is True or (q.get("selection_type") or "") == "multi"
+            if multi:
                 lines.append("（可多选）")
             for j, opt in enumerate(opts, 1):
                 if isinstance(opt, str):
@@ -364,7 +361,7 @@ def _question_options_text(tool_calls: list) -> str:
 
 
 def _merge_question_visibility(content: str | None, tool_calls: list | None) -> str | None:
-    """保证 question 工具产生的选项在 content 中可见。"""
+    """保证交互提问选项在 content 中可见（RikkaHub 有 tool_calls 时也可能只看正文）。"""
     qtext = _question_options_text(tool_calls)
     if not qtext:
         return content
@@ -377,14 +374,98 @@ def _merge_question_visibility(content: str | None, tool_calls: list | None) -> 
 
 
 def _question_only_tool_calls(tool_calls: list | None) -> bool:
-    """是否仅为 Desktop question 工具（无其它业务工具）。"""
+    """是否仅为 Desktop question / RikkaHub ask_user 交互提问（无其它业务工具）。"""
     names = set()
     for tc in tool_calls or []:
         fn = (tc or {}).get("function") or {}
         name = (fn.get("name") or "").strip().lower()
         if name:
             names.add(name)
-    return bool(names) and names == {"question"}
+    return bool(names) and names.issubset({"question", "ask_user"})
+
+
+def _option_label(opt) -> str:
+    if isinstance(opt, str):
+        return opt.strip()
+    if isinstance(opt, dict):
+        label = (opt.get("label") or "").strip()
+        desc = (opt.get("description") or "").strip()
+        if label and desc:
+            return f"{label} — {desc}"
+        return label or desc
+    return ""
+
+
+def _rewrite_question_to_ask_user(tool_calls: list) -> list:
+    """把 Desktop `question` 调用改写成 RikkaHub 本地工具 `ask_user`（卡片可点选）。
+
+    RikkaHub schema:
+      questions: [{ id, question, options: string[], selection_type: text|single|multi }]
+    Desktop schema:
+      questions: [{ question, options: [{label, description}], multiple?, ... }]
+    """
+    out = []
+    qi = 0
+    for tc in tool_calls or []:
+        if not isinstance(tc, dict):
+            continue
+        fn = tc.get("function") or {}
+        name = (fn.get("name") or "").lower()
+        if name not in ("question", "ask_user"):
+            out.append(tc)
+            continue
+        try:
+            args = json.loads(fn.get("arguments") or "{}") if isinstance(fn.get("arguments"), str) else (fn.get("arguments") or {})
+        except (json.JSONDecodeError, TypeError):
+            out.append(tc)
+            continue
+        if name == "ask_user":
+            qs = args.get("questions") or []
+            changed = False
+            new_qs = []
+            for q in qs:
+                if isinstance(q, dict) and not q.get("id"):
+                    qi += 1
+                    q = {**q, "id": f"q{qi}"}
+                    changed = True
+                new_qs.append(q)
+            if not changed:
+                out.append(tc)
+                continue
+            args = {**args, "questions": new_qs}
+        else:
+            qs_in = args.get("questions") or []
+            if isinstance(qs_in, dict):
+                qs_in = [qs_in]
+            new_qs = []
+            for q in qs_in:
+                if not isinstance(q, dict):
+                    continue
+                qi += 1
+                opts = q.get("options") or []
+                labels = [x for x in (_option_label(o) for o in opts) if x]
+                if q.get("multiple") is True:
+                    st = "multi"
+                elif labels:
+                    st = "single"
+                else:
+                    st = "text"
+                new_qs.append({
+                    "id": q.get("id") or f"q{qi}",
+                    "question": q.get("question") or "",
+                    "options": labels,
+                    "selection_type": st,
+                })
+            args = {"questions": new_qs}
+        out.append({
+            **tc,
+            "type": "function",
+            "function": {
+                "name": "ask_user",
+                "arguments": json.dumps(args, ensure_ascii=False),
+            },
+        })
+    return out
 
 
 def _build_response(
@@ -618,16 +699,10 @@ async def chat_completions(
 
         if tool_calls:
             visible = _merge_question_visibility(content, tool_calls)
-            if _question_only_tool_calls(tool_calls):
-                return _build_response(
-                    msg_id, request.model,
-                    content=visible, tool_calls=None,
-                    reasoning=think_content,
-                    finish_reason="stop", usage=usage
-                )
+            out_calls = _rewrite_question_to_ask_user(tool_calls)
             return _build_response(
                 msg_id, request.model,
-                content=visible, tool_calls=tool_calls,
+                content=visible, tool_calls=out_calls,
                 reasoning=think_content,
                 finish_reason="tool_calls", usage=usage
             )
@@ -777,19 +852,11 @@ async def _stream_response(
 
             if collected_tool_calls:
                 visible = _merge_question_visibility("".join(content_buffer_chunks), collected_tool_calls)
-                if _question_only_tool_calls(collected_tool_calls):
-                    if visible:
-                        yield _build_chunk(msg_id, model, created=created_t, content=visible)
-                    yield _build_chunk(msg_id, model, created=created_t, finish_reason="stop")
-                    yield "data: [DONE]\n\n"
-                    if last_usage:
-                        _add_usage(model, last_usage.get("promptTokens", 0), last_usage.get("completionTokens", 0))
-                    return
+                out_calls = _rewrite_question_to_ask_user(collected_tool_calls)
                 if visible:
                     yield _build_chunk(msg_id, model, created=created_t, content=visible)
-                # 原生 tool_calls 直接输出（OpenAI 标准格式，附 index）
                 streaming_tc = []
-                for i, tc in enumerate(collected_tool_calls):
+                for i, tc in enumerate(out_calls):
                     item = {**tc, "index": i}
                     streaming_tc.append(item)
                 yield _build_chunk(msg_id, model, created=created_t,
