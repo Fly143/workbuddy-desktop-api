@@ -316,14 +316,15 @@ def _split_think(text: str) -> Tuple[str, str]:
 # ─── 响应构建 ─────────────────────────────────────────────────
 
 def _question_options_text(tool_calls: list) -> str:
-    """把 Desktop `question` / RikkaHub `ask_user` 工具调用转成可见选项文本。"""
+    """把 WorkBuddy `AskUserQuestion` / RikkaHub `ask_user` 转成可见选项文本。"""
+    ask_names = {"askuserquestion", "ask_user_question", "ask_followup_question", "question", "ask_user"}
     blocks = []
     for tc in tool_calls or []:
         if not isinstance(tc, dict):
             continue
         fn = tc.get("function") or {}
         name = (fn.get("name") or "").lower()
-        if name not in ("question", "ask_user"):
+        if name not in ask_names:
             continue
         raw = fn.get("arguments") or ""
         try:
@@ -339,7 +340,7 @@ def _question_options_text(tool_calls: list) -> str:
             title = (q.get("question") or "").strip() or f"选项 {i}"
             opts = q.get("options") or []
             lines = [f"### {title}"]
-            multi = q.get("multiple") is True or (q.get("selection_type") or "") == "multi"
+            multi = q.get("multiSelect") is True or q.get("multiple") is True or (q.get("selection_type") or "") == "multi"
             if multi:
                 lines.append("（可多选）")
             for j, opt in enumerate(opts, 1):
@@ -374,14 +375,15 @@ def _merge_question_visibility(content: str | None, tool_calls: list | None) -> 
 
 
 def _question_only_tool_calls(tool_calls: list | None) -> bool:
-    """是否仅为 Desktop question / RikkaHub ask_user 交互提问（无其它业务工具）。"""
+    """是否仅为交互提问类工具（无其它业务工具）。"""
+    ask = {"askuserquestion", "ask_user_question", "ask_followup_question", "question", "ask_user"}
     names = set()
     for tc in tool_calls or []:
         fn = (tc or {}).get("function") or {}
         name = (fn.get("name") or "").strip().lower()
         if name:
             names.add(name)
-    return bool(names) and names.issubset({"question", "ask_user"})
+    return bool(names) and names.issubset(ask)
 
 
 def _option_label(opt) -> str:
@@ -397,13 +399,15 @@ def _option_label(opt) -> str:
 
 
 def _rewrite_question_to_ask_user(tool_calls: list) -> list:
-    """把 Desktop `question` 调用改写成 RikkaHub 本地工具 `ask_user`（卡片可点选）。
+    """把 WorkBuddy `AskUserQuestion` 改写成 RikkaHub 本地工具 `ask_user`。
 
+    WorkBuddy schema（app.asar）:
+      questions: [{ question, header?, options:[{label,description}] (2-4), multiSelect? }] (1-4)
     RikkaHub schema:
       questions: [{ id, question, options: string[], selection_type: text|single|multi }]
-    Desktop schema:
-      questions: [{ question, options: [{label, description}], multiple?, ... }]
+    注意：WorkBuddy **不是** MiMo Desktop 的 `question` 工具。
     """
+    ask_names = {"askuserquestion", "ask_user_question", "ask_followup_question", "question", "ask_user"}
     out = []
     qi = 0
     for tc in tool_calls or []:
@@ -411,7 +415,7 @@ def _rewrite_question_to_ask_user(tool_calls: list) -> list:
             continue
         fn = tc.get("function") or {}
         name = (fn.get("name") or "").lower()
-        if name not in ("question", "ask_user"):
+        if name not in ask_names:
             out.append(tc)
             continue
         try:
@@ -444,7 +448,7 @@ def _rewrite_question_to_ask_user(tool_calls: list) -> list:
                 qi += 1
                 opts = q.get("options") or []
                 labels = [x for x in (_option_label(o) for o in opts) if x]
-                if q.get("multiple") is True:
+                if q.get("multiSelect") is True or q.get("multiple") is True:
                     st = "multi"
                 elif labels:
                     st = "single"
@@ -469,41 +473,46 @@ def _rewrite_question_to_ask_user(tool_calls: list) -> list:
 
 
 def _desktop_question_tool() -> dict:
-    """Desktop 内置 `question` 工具定义（模型侧只在 tool list 里有它才会调用）。"""
+    """WorkBuddy `AskUserQuestion` 工具定义（非 MiMo question）。
+
+    schema 来自 app.asar：questions 1-4；options 2-4，label≤50，header≤12，可选 multiSelect。
+    """
     return {
         "type": "function",
         "function": {
-            "name": "question",
+            "name": "AskUserQuestion",
             "description": (
-                "Ask the user a clarifying question with selectable options. "
-                "Use this when you need the user to choose before continuing."
+                "Ask the user one or more clarification questions with selectable options. "
+                "Use when you need the user to choose before continuing."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "questions": {
                         "type": "array",
-                        "description": "Questions to ask the user",
+                        "minItems": 1,
+                        "maxItems": 4,
                         "items": {
                             "type": "object",
                             "properties": {
                                 "question": {"type": "string"},
+                                "header": {"type": "string", "maxLength": 12},
                                 "options": {
                                     "type": "array",
-                                    "description": "Selectable options",
+                                    "minItems": 2,
+                                    "maxItems": 4,
                                     "items": {
                                         "type": "object",
                                         "properties": {
-                                            "label": {"type": "string"},
+                                            "label": {"type": "string", "maxLength": 50},
                                             "description": {"type": "string"},
                                         },
                                         "required": ["label"],
                                     },
                                 },
-                                "multiple": {"type": "boolean"},
-                                "custom": {"type": "boolean"},
+                                "multiSelect": {"type": "boolean"},
                             },
-                            "required": ["question"],
+                            "required": ["question", "options"],
                         },
                     }
                 },
@@ -514,7 +523,7 @@ def _desktop_question_tool() -> dict:
 
 
 def _client_has_ask_user_only(tools_dict: list | None) -> bool:
-    """客户端只声明了 ask_user、未声明 question（RikkaHub 场景）。"""
+    """客户端只声明了 RikkaHub ask_user、未声明 WorkBuddy 提问工具。"""
     if not tools_dict:
         return False
     names = set()
@@ -523,11 +532,14 @@ def _client_has_ask_user_only(tools_dict: list | None) -> bool:
         n = (fn.get("name") or t.get("name") or "").lower()
         if n:
             names.add(n)
-    return "ask_user" in names and "question" not in names
+    wb_ask = {"askuserquestion", "ask_user_question", "ask_followup_question", "question"}
+    has_rikka = "ask_user" in names
+    has_wb = bool(names & wb_ask)
+    return has_rikka and not has_wb
 
 
 def _ensure_desktop_question_tool(tools_dict: list | None) -> list | None:
-    """客户端带 RikkaHub `ask_user` 时，向 Desktop 补注入 `question`。"""
+    """客户端带 RikkaHub `ask_user` 时，向 WorkBuddy 补注入 `AskUserQuestion`。"""
     if not tools_dict:
         return tools_dict
     names = set()
@@ -536,7 +548,8 @@ def _ensure_desktop_question_tool(tools_dict: list | None) -> list | None:
         n = (fn.get("name") or t.get("name") or "").lower()
         if n:
             names.add(n)
-    if "question" in names or "ask_user" not in names:
+    wb_ask = {"askuserquestion", "ask_user_question", "ask_followup_question", "question"}
+    if names & wb_ask or "ask_user" not in names:
         return tools_dict
     return list(tools_dict) + [_desktop_question_tool()]
 
