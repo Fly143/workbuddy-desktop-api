@@ -2,6 +2,12 @@
 
 本文件记录 workbuddy-desktop-api 的重要变更。协议层历史继承自 [xiaomi-mimo-desktop-api](https://github.com/Fly143/xiaomi-mimo-desktop-api)。
 
+## [v1.2.3.4] — 2026-09-16
+
+### 修复
+- **Responses 丢原生 `tool_calls`** — 非流式未用 `native_tool_calls`、流式忽略 `type=tool_calls`，导致联网/写文件工具不出现在 output；已修
+- **移除**「思考后无正文」兜底文案
+
 ## [v1.2.3.3] — 2026-09-14
 
 ### 修复
