@@ -39,6 +39,7 @@ router = APIRouter()
 
 THINK_OPEN = "<think>"
 THINK_CLOSE = "</think>"
+EMPTY_BODY_NOTE = "（模型已完成思考，但未输出正文）"
 
 MODELS_CONFIG_URL = ""  # WorkBuddy Desktop 通路无需单独的模型配置端点
 
@@ -800,7 +801,13 @@ async def chat_completions(
             )
         else:
             full_content = content
-            if think_content:
+            if not content and not (think_content or "").strip():
+                content = EMPTY_BODY_NOTE
+                full_content = EMPTY_BODY_NOTE
+            elif not content and think_content:
+                # 思考有、正文无：仍拼 think，便于客户端看到模型已响应
+                full_content = f"{THINK_OPEN}{think_content}{THINK_CLOSE}\n{EMPTY_BODY_NOTE}"
+            elif think_content:
                 full_content = f"{THINK_OPEN}{think_content}{THINK_CLOSE}\n{content}"
             return _build_response(
                 msg_id, request.model,
@@ -968,8 +975,12 @@ async def _stream_response(
                 return
 
             # 无工具调用：补发缓冲正文后再发 stop
+            body_sent = False
             for _buffered in content_buffer_chunks:
                 yield _build_chunk(msg_id, model, created=created_t, content=_buffered)
+                body_sent = True
+            if not body_sent:
+                yield _build_chunk(msg_id, model, created=created_t, content=EMPTY_BODY_NOTE)
             yield _build_chunk(msg_id, model, created=created_t, finish_reason="stop")
             yield "data: [DONE]\n\n"
             if last_usage:
@@ -982,6 +993,7 @@ async def _stream_response(
             buffer = ""
             in_think = False
             last_usage = None
+            body_sent = False
 
             pending_text = ""
             async for sse_data in client.stream_api(
@@ -1006,6 +1018,7 @@ async def _stream_response(
                                 clean = _clean_response_text(safe)
                                 if clean:
                                     yield _build_chunk(msg_id, model, created=created_t, content=clean)
+                                    body_sent = True
                             in_think = True
                             buffer = buffer[idx + len(THINK_OPEN):]
                             continue
@@ -1015,6 +1028,7 @@ async def _stream_response(
                             clean = _clean_response_text(safe)
                             if clean:
                                 yield _build_chunk(msg_id, model, created=created_t, content=clean)
+                                body_sent = True
                         buffer = keep
                         break
                     else:
@@ -1041,7 +1055,10 @@ async def _stream_response(
                         yield _build_chunk(msg_id, model, created=created_t, reasoning=clean)
                     else:
                         yield _build_chunk(msg_id, model, created=created_t, content=clean)
+                        body_sent = True
 
+            if not body_sent:
+                yield _build_chunk(msg_id, model, created=created_t, content=EMPTY_BODY_NOTE)
             yield _build_chunk(msg_id, model, created=created_t, finish_reason="stop")
             yield "data: [DONE]\n\n"
             if last_usage:
