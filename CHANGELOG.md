@@ -6,7 +6,6 @@
 
 ### 修复
 - **Responses 丢原生 `tool_calls`** — 非流式未用 `native_tool_calls`、流式忽略 `type=tool_calls`，导致联网/写文件工具不出现在 output；已修
-- **移除**「思考后无正文」兜底文案
 
 ## [v1.2.3.3] — 2026-09-14
 
