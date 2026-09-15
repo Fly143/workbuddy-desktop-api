@@ -1785,17 +1785,20 @@ async def _do_response_chat(body: dict, account) -> tuple:
         items.append(_response_reasoning_item(think_content))
         has_thinking = True
 
-    # 工具调用提取
+    # 工具调用提取：优先原生 tool_calls，无则回退文本解析
     tool_names = []
     tool_calls = None
     if tools_dict:
         tool_names = get_tool_names(tools_dict)
-        result = extract_tool_call(content, tool_names)
-        if result:
-            if result[0]:
-                tool_calls = result[0]
-            if result[1] is not None:
-                content = result[1]  # 使用清理后的文本（含 WorkBuddyML 残留清理）
+        if native_tool_calls:
+            tool_calls = _normalize_native_tool_calls(native_tool_calls)
+        else:
+            result = extract_tool_call(content, tool_names)
+            if result:
+                if result[0]:
+                    tool_calls = result[0]
+                if result[1] is not None:
+                    content = result[1]
 
     # 未命中工具调用时兜底清洗标记残留；命中时 extract_tool_call 已返回清洗后文本，不可再 clean（会抹掉标记）
     if not tool_calls:
@@ -1953,6 +1956,33 @@ async def _stream_response_events(body: dict, account):
             ):
                 if sse_data.get("type") == "usage":
                     api_usage = sse_data
+                    continue
+                if sse_data.get("type") == "tool_calls":
+                    for tc in sse_data.get("calls") or []:
+                        if not (tc.get("function") or {}).get("name"):
+                            continue
+                        idx = len(tool_calls_map)
+                        fc_item = _response_function_call_item(tc)
+                        fc_id = fc_item["id"]
+                        tool_calls_map[idx] = {
+                            "id": fc_id,
+                            "call_id": fc_item.get("call_id", fc_id),
+                            "name": tc["function"]["name"],
+                            "arguments": tc["function"].get("arguments") or "{}",
+                            "status": "completed",
+                        }
+                        added_item = {k: v for k, v in fc_item.items() if k != "arguments"}
+                        oi, start_evt = _start_output_item(added_item)
+                        if start_evt:
+                            yield start_evt
+                        yield {
+                            "type": "response.function_call_arguments.delta",
+                            "item_id": fc_id,
+                            "output_index": oi,
+                            "delta": fc_item.get("arguments") or "{}",
+                        }
+                    continue
+                if sse_data.get("type") == "finish":
                     continue
                 chunk = sse_data.get("content", "")
                 if not chunk:
